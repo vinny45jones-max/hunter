@@ -42,7 +42,7 @@ docker compose up -d
 ## Тесты
 
 ```bash
-# Локальные тесты (64 passed, 3 skipped)
+# Локальные тесты (102 passed, 3 skipped)
 python -m pytest -q
 
 # Live API тесты (нужен ANTHROPIC_API_KEY в .env)

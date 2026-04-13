@@ -10,7 +10,7 @@ The project has working local tests plus opt-in live integration tests.
 
 1. Default local test suite:
    - command: `.\.venv\Scripts\python.exe -m pytest -q`
-   - current result: `64 passed, 3 skipped`
+   - current result: `102 passed, 3 skipped`
 
 2. Live Anthropic API tests:
    - command: `.\.venv\Scripts\python.exe -m pytest tests\test_ai_filter_live.py --live-api -q`
