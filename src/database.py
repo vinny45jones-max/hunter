@@ -26,7 +26,12 @@ async def init():
                     CHECK(status IN ('new','filtered','sent_to_tg','applied','skipped','error')),
                 error_message TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
-                applied_at TEXT
+                applied_at TEXT,
+                apply_state TEXT DEFAULT 'idle',
+                cover_letter_version INTEGER DEFAULT 0,
+                employer_requirements TEXT,
+                require_cover_letter INTEGER DEFAULT 0,
+                negotiation_id TEXT
             );
 
             CREATE TABLE IF NOT EXISTS search_log (
@@ -67,6 +72,22 @@ async def init():
             );
         """)
         await db.commit()
+
+        # Миграция: добавить новые поля если их нет (для существующих БД)
+        cursor = await db.execute("PRAGMA table_info(vacancies)")
+        existing_cols = {row[1] for row in await cursor.fetchall()}
+        migrations = [
+            ("apply_state", "TEXT DEFAULT 'idle'"),
+            ("cover_letter_version", "INTEGER DEFAULT 0"),
+            ("employer_requirements", "TEXT"),
+            ("require_cover_letter", "INTEGER DEFAULT 0"),
+            ("negotiation_id", "TEXT"),
+        ]
+        for col_name, col_def in migrations:
+            if col_name not in existing_cols:
+                await db.execute(f"ALTER TABLE vacancies ADD COLUMN {col_name} {col_def}")
+                log.info(f"Migrated: added column vacancies.{col_name}")
+        await db.commit()
     log.info("Database initialized")
 
 
@@ -77,18 +98,23 @@ async def save_vacancy(v: Vacancy) -> int:
         cursor = await db.execute(
             """INSERT INTO vacancies
                (external_id, url, title, company, salary, city, description,
-                relevance_score, relevance_reason, cover_letter, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                relevance_score, relevance_reason, cover_letter, status,
+                apply_state, cover_letter_version, employer_requirements,
+                require_cover_letter, negotiation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(external_id) DO UPDATE SET
                 relevance_score=excluded.relevance_score,
                 relevance_reason=excluded.relevance_reason,
                 cover_letter=excluded.cover_letter,
                 status=excluded.status,
-                description=excluded.description
+                description=excluded.description,
+                employer_requirements=excluded.employer_requirements,
+                require_cover_letter=excluded.require_cover_letter
             """,
             (v.external_id, v.url, v.title, v.company, v.salary, v.city,
              v.description, v.relevance_score, v.relevance_reason,
-             v.cover_letter, v.status),
+             v.cover_letter, v.status, v.apply_state, v.cover_letter_version,
+             v.employer_requirements, v.require_cover_letter, v.negotiation_id),
         )
         await db.commit()
         return cursor.lastrowid
@@ -128,6 +154,28 @@ async def update_status(vacancy_id: int, status: str, error_message: str = None)
         await db.commit()
 
 
+def _row_to_vacancy(row) -> Vacancy:
+    return Vacancy(
+        id=row["id"],
+        external_id=row["external_id"],
+        url=row["url"],
+        title=row["title"],
+        company=row["company"],
+        salary=row["salary"],
+        city=row["city"],
+        description=row["description"],
+        relevance_score=row["relevance_score"],
+        relevance_reason=row["relevance_reason"],
+        cover_letter=row["cover_letter"],
+        status=row["status"],
+        apply_state=row["apply_state"] or "idle",
+        cover_letter_version=row["cover_letter_version"] or 0,
+        employer_requirements=row["employer_requirements"],
+        require_cover_letter=bool(row["require_cover_letter"]),
+        negotiation_id=row["negotiation_id"],
+    )
+
+
 async def get_vacancy(vacancy_id: int) -> Optional[Vacancy]:
     async with aiosqlite.connect(_db_path) as db:
         db.row_factory = aiosqlite.Row
@@ -135,20 +183,7 @@ async def get_vacancy(vacancy_id: int) -> Optional[Vacancy]:
         row = await cursor.fetchone()
         if not row:
             return None
-        return Vacancy(
-            id=row["id"],
-            external_id=row["external_id"],
-            url=row["url"],
-            title=row["title"],
-            company=row["company"],
-            salary=row["salary"],
-            city=row["city"],
-            description=row["description"],
-            relevance_score=row["relevance_score"],
-            relevance_reason=row["relevance_reason"],
-            cover_letter=row["cover_letter"],
-            status=row["status"],
-        )
+        return _row_to_vacancy(row)
 
 
 async def get_last_vacancies(limit: int = 5) -> List[Vacancy]:
@@ -158,15 +193,7 @@ async def get_last_vacancies(limit: int = 5) -> List[Vacancy]:
             "SELECT * FROM vacancies ORDER BY id DESC LIMIT ?", (limit,)
         )
         rows = await cursor.fetchall()
-    return [
-        Vacancy(
-            id=r["id"], external_id=r["external_id"], url=r["url"],
-            title=r["title"], company=r["company"], salary=r["salary"],
-            city=r["city"], relevance_score=r["relevance_score"],
-            relevance_reason=r["relevance_reason"], status=r["status"],
-        )
-        for r in rows
-    ]
+    return [_row_to_vacancy(r) for r in rows]
 
 
 async def get_stats() -> dict:
@@ -194,6 +221,33 @@ async def save_search_log(query: str = "", total: int = 0, new: int = 0, relevan
             (query, total, new, relevant),
         )
         await db.commit()
+
+
+async def update_apply_state(vacancy_id: int, state: str, **kwargs):
+    async with aiosqlite.connect(_db_path) as db:
+        sets = ["apply_state=?"]
+        vals = [state]
+        for key, val in kwargs.items():
+            sets.append(f"{key}=?")
+            vals.append(val)
+        vals.append(vacancy_id)
+        await db.execute(
+            f"UPDATE vacancies SET {', '.join(sets)} WHERE id=?", vals
+        )
+        await db.commit()
+
+
+async def increment_cover_letter_version(vacancy_id: int) -> int:
+    async with aiosqlite.connect(_db_path) as db:
+        await db.execute(
+            "UPDATE vacancies SET cover_letter_version = cover_letter_version + 1 WHERE id=?",
+            (vacancy_id,),
+        )
+        await db.commit()
+        row = await (await db.execute(
+            "SELECT cover_letter_version FROM vacancies WHERE id=?", (vacancy_id,)
+        )).fetchone()
+        return row[0] if row else 0
 
 
 async def count_today_applies() -> int:
@@ -308,10 +362,7 @@ async def find_vacancy_by_company_title(company: str, title: str) -> Optional[Va
         row = await cursor.fetchone()
         if not row:
             return None
-        return Vacancy(
-            id=row["id"], external_id=row["external_id"], url=row["url"],
-            title=row["title"], company=row["company"],
-        )
+        return _row_to_vacancy(row)
 
 
 async def get_unread_messages() -> List[Message]:

@@ -1,12 +1,12 @@
 # План реализации: Cover Letter Flow (v3)
 
 ## 1. Расширение БД — новые поля в таблице vacancies
-- [ ] `apply_state TEXT DEFAULT 'idle'` — состояние отклика (idle | previewing | editing | sending | sent | failed)
-- [ ] `cover_letter_version INTEGER DEFAULT 0` — счётчик версий письма
-- [ ] `employer_requirements TEXT` — JSON: требования работодателя к письму
-- [ ] `require_cover_letter BOOLEAN DEFAULT 0` — обязательно ли письмо
-- [ ] `negotiation_id TEXT` — ID отклика на rabota.by
-- [ ] Миграция в `database.py` (ALTER TABLE или пересоздание)
+- [x] `apply_state TEXT DEFAULT 'idle'` — состояние отклика (idle | previewing | editing | sending | sent | failed)
+- [x] `cover_letter_version INTEGER DEFAULT 0` — счётчик версий письма
+- [x] `employer_requirements TEXT` — JSON: требования работодателя к письму
+- [x] `require_cover_letter BOOLEAN DEFAULT 0` — обязательно ли письмо
+- [x] `negotiation_id TEXT` — ID отклика на rabota.by
+- [x] Миграция в `database.py` (ALTER TABLE или пересоздание)
 
 ## 2. extract_cover_letter_requirements()
 - [ ] Функция в новом модуле `cover_flow.py`

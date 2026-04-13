@@ -16,6 +16,11 @@ class Vacancy:
     cover_letter: Optional[str] = None
     status: str = "new"
     id: Optional[int] = None
+    apply_state: str = "idle"  # idle | previewing | editing | sending | sent | failed
+    cover_letter_version: int = 0
+    employer_requirements: Optional[str] = None  # JSON: требования работодателя к письму
+    require_cover_letter: bool = False
+    negotiation_id: Optional[str] = None
 
 
 @dataclass
