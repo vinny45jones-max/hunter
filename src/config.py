@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     session_path: str = "/data/rabota_session.json"
     sessions_dir: str = "/data/sessions"
 
+    # Профиль кандидата
+    candidate_profile_path: str = "profile.yml"
+
     # Лимиты
     max_applies_per_day: int = 10
 

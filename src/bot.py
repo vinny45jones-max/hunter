@@ -26,6 +26,13 @@ ONBOARD_EMAIL = 11
 ONBOARD_PASSWORD = 12
 ONBOARD_CONFIRM = 13
 
+# Settings states
+SETTINGS_MENU = 20
+SETTINGS_EMAIL = 21
+SETTINGS_PASSWORD = 22
+SETTINGS_KEYWORDS = 23
+SETTINGS_RESUME = 24
+
 _app: Application = None
 
 
@@ -356,6 +363,184 @@ async def onboard_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("onboard_email", None)
     context.user_data.pop("onboard_password", None)
     await update.message.reply_text("Онбординг отменён. Используйте /start чтобы начать заново.")
+    return ConversationHandler.END
+
+
+# ─── /settings handlers ──────────────────────────
+
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _profile_exists():
+        await update.message.reply_text(
+            "Профиль не найден. Используйте /start для онбординга."
+        )
+        return ConversationHandler.END
+
+    profile_path = settings.candidate_profile_path
+    with open(profile_path, "r", encoding="utf-8") as f:
+        profile = yaml.safe_load(f)
+
+    email = await database.get_setting("rabota_email") or "не указан"
+    keywords = ", ".join(profile.get("search_keywords", []))
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Изменить email", callback_data="settings_email")],
+        [InlineKeyboardButton("Изменить пароль", callback_data="settings_password")],
+        [InlineKeyboardButton("Изменить ключевые слова", callback_data="settings_keywords")],
+        [InlineKeyboardButton("Загрузить новое резюме", callback_data="settings_resume")],
+    ])
+
+    await update.message.reply_text(
+        f"Текущие настройки:\n\n"
+        f"Имя: {profile.get('candidate_name', 'N/A')}\n"
+        f"Email: {email}\n"
+        f"Ключевые слова: {keywords}\n",
+        reply_markup=keyboard,
+    )
+    return SETTINGS_MENU
+
+
+async def settings_ask_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text("Введите новый email rabota.by:")
+    return SETTINGS_EMAIL
+
+
+async def settings_save_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    email = update.message.text.strip()
+    if "@" not in email:
+        await update.message.reply_text("Введите корректный email:")
+        return SETTINGS_EMAIL
+
+    await database.set_setting("rabota_email", email)
+    await update.message.reply_text(f"Email обновлён: {email}")
+    return ConversationHandler.END
+
+
+async def settings_ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(
+        "Введите новый пароль rabota.by:\n"
+        "(сообщение будет удалено сразу после получения)"
+    )
+    return SETTINGS_PASSWORD
+
+
+async def settings_save_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    password = update.message.text.strip()
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    if not password:
+        await update.message.reply_text("Пароль не может быть пустым:")
+        return SETTINGS_PASSWORD
+
+    await database.set_setting("rabota_password", password)
+    await update.message.reply_text("Пароль обновлён.")
+    return ConversationHandler.END
+
+
+async def settings_ask_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(
+        "Введите новые ключевые слова через запятую:\n"
+        "(например: менеджер, директор, CEO)"
+    )
+    return SETTINGS_KEYWORDS
+
+
+async def settings_save_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    keywords = [kw.strip() for kw in text.split(",") if kw.strip()]
+
+    if not keywords:
+        await update.message.reply_text("Введите хотя бы одно ключевое слово:")
+        return SETTINGS_KEYWORDS
+
+    profile_path = settings.candidate_profile_path
+    with open(profile_path, "r", encoding="utf-8") as f:
+        profile = yaml.safe_load(f)
+
+    profile["search_keywords"] = keywords
+    with open(profile_path, "w", encoding="utf-8") as f:
+        yaml.dump(profile, f, allow_unicode=True, default_flow_style=False)
+
+    await update.message.reply_text(
+        f"Ключевые слова обновлены: {', '.join(keywords)}"
+    )
+    return ConversationHandler.END
+
+
+async def settings_ask_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text("Загрузите новое резюме (PDF или DOCX):")
+    return SETTINGS_RESUME
+
+
+async def settings_save_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc:
+        await update.message.reply_text("Отправьте файл резюме (PDF или DOCX).")
+        return SETTINGS_RESUME
+
+    filename = doc.file_name or ""
+    if not filename.lower().endswith((".pdf", ".docx")):
+        await update.message.reply_text(
+            "Неподдерживаемый формат. Отправьте PDF или DOCX."
+        )
+        return SETTINGS_RESUME
+
+    await update.message.reply_text("Анализирую резюме...")
+
+    try:
+        tg_file = await doc.get_file()
+        file_bytes = await tg_file.download_as_bytearray()
+        profile = await resume_parser.parse_resume(bytes(file_bytes), filename)
+    except Exception as e:
+        log.error("settings_save_resume error: %s", e)
+        await update.message.reply_text(
+            f"Не удалось обработать файл: {e}\nПопробуйте другой файл."
+        )
+        return SETTINGS_RESUME
+
+    # Обновляем profile.yml (сохраняем старые search_keywords если пользователь их менял вручную)
+    profile_path = settings.candidate_profile_path
+    old_profile = {}
+    if os.path.exists(profile_path):
+        with open(profile_path, "r", encoding="utf-8") as f:
+            old_profile = yaml.safe_load(f) or {}
+
+    new_profile = {
+        "candidate_name": profile.name,
+        "candidate_profile": profile.summary,
+        "search_keywords": profile.search_keywords,
+    }
+    with open(profile_path, "w", encoding="utf-8") as f:
+        yaml.dump(new_profile, f, allow_unicode=True, default_flow_style=False)
+
+    # Сбрасываем кеш профиля
+    ai_filter._profile_cache = None
+
+    await update.message.reply_text(
+        f"Резюме обновлено!\n"
+        f"Имя: {profile.name}\n"
+        f"Специализация: {profile.title}\n"
+        f"Ключевые слова: {', '.join(profile.search_keywords)}"
+    )
+    return ConversationHandler.END
+
+
+async def settings_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Настройки закрыты.")
     return ConversationHandler.END
 
 
@@ -918,6 +1103,42 @@ def create_app() -> Application:
         )
 
     _app.add_handler(onboard_conv)
+
+    # Settings conversation handler
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*per_message.*", category=UserWarning)
+        settings_conv = ConversationHandler(
+            entry_points=[
+                CommandHandler("settings", cmd_settings),
+            ],
+            states={
+                SETTINGS_MENU: [
+                    CallbackQueryHandler(settings_ask_email, pattern=r"^settings_email$"),
+                    CallbackQueryHandler(settings_ask_password, pattern=r"^settings_password$"),
+                    CallbackQueryHandler(settings_ask_keywords, pattern=r"^settings_keywords$"),
+                    CallbackQueryHandler(settings_ask_resume, pattern=r"^settings_resume$"),
+                ],
+                SETTINGS_EMAIL: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_email),
+                ],
+                SETTINGS_PASSWORD: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_password),
+                ],
+                SETTINGS_KEYWORDS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_keywords),
+                ],
+                SETTINGS_RESUME: [
+                    MessageHandler(filters.Document.ALL, settings_save_resume),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", settings_cancel),
+            ],
+            per_message=False,
+            per_chat=True,
+        )
+
+    _app.add_handler(settings_conv)
 
     # Reply conversation handler
     # per_message=False т.к. entry point — CallbackQuery, а ответ — Message
