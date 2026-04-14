@@ -427,7 +427,8 @@ async def callback_cover_send(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.reply_text("Отправляю отклик...")
 
     from src import applier
-    success, message = await applier.apply_to_vacancy(vacancy)
+    chat_id = str(update.effective_chat.id)
+    success, message = await applier.apply_to_vacancy(vacancy, chat_id)
 
     if success:
         await cover_flow.mark_sent(vacancy_id)
@@ -634,7 +635,8 @@ async def callback_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     from src import responder
-    success, message = await responder.send_reply(conversation_id, text)
+    chat_id = str(update.effective_chat.id)
+    success, message = await responder.send_reply(conversation_id, text, chat_id)
 
     if success:
         await database.save_outgoing_message(conversation_id, text)

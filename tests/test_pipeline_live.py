@@ -14,13 +14,13 @@ async def test_live_pipeline_scrape_ai_db(
     live_anthropic_api_key,
     live_web_enabled,
 ):
-    from src import database, pipeline, scraper
+    from src import browser_pool, database, pipeline, scraper
 
     test_db = str(tmp_path / "live_pipeline.db")
     monkeypatch.setattr(database, "_db_path", test_db)
 
-    async def _parse_one_live_vacancy():
-        vacancies = await scraper.parse_search_results("директор", max_pages=1)
+    async def _parse_one_live_vacancy(chat_id, *args, **kwargs):
+        vacancies = await scraper.parse_search_results("директор", chat_id, max_pages=1)
         return vacancies[:1]
 
     monkeypatch.setattr(scraper, "_random_delay", _no_sleep)
@@ -51,4 +51,4 @@ async def test_live_pipeline_scrape_ai_db(
         stats = await database.get_stats()
         assert stats["total"] >= 1
     finally:
-        await scraper.close()
+        await browser_pool.close()

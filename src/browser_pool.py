@@ -1,5 +1,7 @@
 """Единый Playwright-браузер для всех модулей."""
+import asyncio
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Playwright
@@ -8,6 +10,7 @@ from src.config import settings, log
 
 _browser: Optional[Browser] = None
 _playwright: Optional[Playwright] = None
+_semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -75,6 +78,26 @@ async def save_context(context: BrowserContext, chat_id: str | int) -> str:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     await context.storage_state(path=path)
     return path
+
+
+@asynccontextmanager
+async def acquire(chat_id: str | int, save_on_exit: bool = True):
+    """Эксклюзивный доступ к браузеру: семафор + per-user контекст.
+
+    На выходе сохраняет storage_state (если save_on_exit) и закрывает контекст,
+    браузер живёт дальше. Семафор не даёт двум юзерам работать параллельно
+    в одном инстансе браузера.
+    """
+    async with _semaphore:
+        context = await get_context(chat_id)
+        try:
+            yield context
+        finally:
+            try:
+                if save_on_exit:
+                    await save_context(context, chat_id)
+            finally:
+                await context.close()
 
 
 async def close():

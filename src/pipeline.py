@@ -37,7 +37,7 @@ async def run_pipeline_for_user(chat_id: str):
 
         # 2. Скрапинг
         all_vacancies = await scraper.parse_all_keywords(
-            keywords=user_keywords, max_pages=user_max_pages
+            chat_id, keywords=user_keywords, max_pages=user_max_pages
         )
 
         # 3. Дедупликация
@@ -94,7 +94,7 @@ async def run_pipeline_for_user(chat_id: str):
         # 5. Загрузить описания только для перспективных
         for v in promising:
             try:
-                v.description = await scraper.get_full_description(v.url)
+                v.description = await scraper.get_full_description(v.url, chat_id)
                 await asyncio.sleep(random.uniform(1, 2))
             except Exception as e:
                 log.warning(f"Pipeline [{chat_id}]: failed to get description for {v.url}: {e}")
@@ -169,7 +169,7 @@ async def check_messages_for_user(chat_id: str):
     log.info(f"Inbox [{chat_id}]: checking messages...")
 
     try:
-        new_messages = await inbox.check_inbox()
+        new_messages = await inbox.check_inbox(chat_id)
 
         for msg in new_messages:
             try:
