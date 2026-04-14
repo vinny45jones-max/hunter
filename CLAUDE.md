@@ -17,6 +17,7 @@ Python 3.11, async. Модули в `src/`:
 - `responder.py` — отправка ответов в переписки на rabota.by
 - `config.py` — pydantic-settings, все параметры из `.env`
 - `models.py` — dataclasses: Vacancy, Message, Conversation
+- `resume_parser.py` — парсинг PDF/DOCX резюме + Claude API → CandidateProfile (имя, навыки, ключевые слова)
 
 ## Стек
 
@@ -26,6 +27,8 @@ Python 3.11, async. Модули в `src/`:
 - `apscheduler` — периодические задачи
 - `aiosqlite` — async SQLite
 - `pydantic-settings` — конфигурация из env
+- `pdfplumber` — парсинг PDF-резюме
+- `python-docx` — парсинг DOCX-резюме
 
 ## Запуск
 
@@ -69,5 +72,5 @@ Live-тесты отключены по умолчанию (флаги `--live-a
 - `.env` содержит секреты — никогда не коммитить
 - CSS-селекторы rabota.by в `scraper.py:SELECTORS` и `inbox.py:INBOX_SELECTORS` — могут сломаться при обновлении сайта
 - На Windows скрапер использует системный Chrome (`chrome` channel), в Docker — Playwright Chromium
-- Профиль кандидата захардкожен в `ai_filter.py` (промпты EVALUATE_PROMPT, COVER_LETTER_PROMPT, REPLY_PROMPT)
+- Профиль кандидата захардкожен в `ai_filter.py` (промпты EVALUATE_PROMPT, COVER_LETTER_PROMPT, REPLY_PROMPT) — будет заменён на динамический из `resume_parser.py`
 - Лимит откликов: `max_applies_per_day` (default 10)
