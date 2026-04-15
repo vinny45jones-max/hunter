@@ -81,30 +81,40 @@ async def _dump_debug(page: Page, chat_id: str | int, tag: str) -> None:
         log.warning(f"auth._dump_debug failed: {e}")
 
 
+async def _try_click(page: Page, selector: str, timeout: int = 3000) -> bool:
+    """Клик по селектору с коротким таймаутом. Возвращает True если кликнулось."""
+    try:
+        await page.click(selector, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 async def _perform_login(page: Page, email: str, password: str) -> None:
     await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+    await page.wait_for_timeout(1500)
 
-    # 1. "Я ищу работу"
-    await page.click("text=Я ищу работу", timeout=10000)
-    await page.wait_for_timeout(1000)
+    # 1. Опциональный role-picker "Я ищу работу" (на некоторых редизайнах отсутствует)
+    if await _try_click(page, "text=Я ищу работу", timeout=3000):
+        await page.wait_for_timeout(1000)
 
-    # 2. "Войти"
-    await page.click('button[data-qa="submit-button"]', timeout=5000)
-    await page.wait_for_timeout(2000)
+    # 2. Опциональная промежуточная кнопка "Войти"
+    if await _try_click(page, 'button[data-qa="submit-button"]', timeout=3000):
+        await page.wait_for_timeout(1500)
 
-    # 3. "Почта"
-    await page.click("text=Почта", timeout=5000)
-    await page.wait_for_timeout(1000)
+    # 3. Опциональный выбор способа "Почта"
+    if await _try_click(page, "text=Почта", timeout=3000):
+        await page.wait_for_timeout(1000)
 
-    # 4. Email
+    # 4. Email — обязательный шаг
     email_input = await page.wait_for_selector(
-        '[data-qa="applicant-login-input-email"]', timeout=5000,
+        '[data-qa="applicant-login-input-email"]', timeout=10000,
     )
     await email_input.fill(email)
 
-    # 5. "Войти с паролем"
-    await page.click("text=Войти с паролем", timeout=5000)
-    await page.wait_for_timeout(2000)
+    # 5. Опциональный переход на форму пароля
+    if await _try_click(page, "text=Войти с паролем", timeout=3000):
+        await page.wait_for_timeout(1500)
 
     # 6. Пароль
     password_input = await page.wait_for_selector(
