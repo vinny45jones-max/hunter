@@ -1,11 +1,46 @@
 import asyncio
+import os
 import signal
 from datetime import datetime
 
+import aiosqlite
+import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.config import settings, log
 from src import database, pipeline, bot
+
+
+async def _backfill_profile_from_yaml():
+    """Для юзеров с rabota_email, но без candidate_name — залить профиль из profile.yml."""
+    path = settings.candidate_profile_path
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            profile = yaml.safe_load(f) or {}
+    except Exception as e:
+        log.warning(f"Backfill: не удалось прочитать {path}: {e}")
+        return
+
+    name = profile.get("candidate_name")
+    summary = profile.get("candidate_profile")
+    keywords = profile.get("search_keywords") or []
+    if not name or not summary:
+        return
+
+    async with aiosqlite.connect(settings.db_path) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT chat_id FROM user_settings WHERE key='rabota_email' "
+            "AND chat_id NOT IN (SELECT chat_id FROM user_settings WHERE key='candidate_name')"
+        )
+        rows = await cur.fetchall()
+
+    for (cid,) in rows:
+        await database.set_setting(cid, "candidate_name", name)
+        await database.set_setting(cid, "candidate_profile", summary)
+        await database.set_setting(cid, "search_queries", ", ".join(keywords))
+        log.info(f"Backfill: профиль залит для chat_id={cid}")
 
 
 async def main():
@@ -13,6 +48,9 @@ async def main():
 
     # 1. Init DB
     await database.init()
+
+    # 1.1 Бэкфилл профиля из profile.yml для юзеров, прошедших онбординг до фикса
+    await _backfill_profile_from_yaml()
 
     # 2. Scheduler
     scheduler = AsyncIOScheduler()

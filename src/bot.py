@@ -393,10 +393,13 @@ async def onboard_confirm_go(update: Update, context: ContextTypes.DEFAULT_TYPE)
     with open(profile_path, "w", encoding="utf-8") as f:
         yaml.dump(profile_data, f, allow_unicode=True, default_flow_style=False)
 
-    # Сохраняем учётку в БД
+    # Сохраняем учётку и профиль в БД
     cid = str(query.message.chat_id)
     await database.set_setting(cid, "rabota_email", email)
     await database.set_setting(cid, "rabota_password", password)
+    await database.set_setting(cid, "candidate_name", profile_data["candidate_name"])
+    await database.set_setting(cid, "candidate_profile", profile_data["candidate_profile"])
+    await database.set_setting(cid, "search_queries", ", ".join(profile_data["search_keywords"]))
 
     # Сбрасываем кеш профиля в ai_filter
     ai_filter._profile_cache = None
