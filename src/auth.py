@@ -52,7 +52,18 @@ async def _is_authorised(page: Page) -> bool:
             body = (await page.inner_text("body")).lower()
         except Exception:
             body = ""
-        for marker in ("мой профиль", "мои резюме", "выйти", "откликнуться"):
+        for marker in (
+            "мой профиль",
+            "мои резюме",
+            "выйти",
+            "откликнуться",
+            "резюме и профиль",
+            "отклики и приглашения",
+            "ваша активность",
+            "автопоиски",
+            "избранные вакансии",
+            "поднимите резюме",
+        ):
             if marker in body:
                 return True
         return False
