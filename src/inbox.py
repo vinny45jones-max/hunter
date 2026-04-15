@@ -33,7 +33,7 @@ async def check_inbox(chat_id: str | int) -> List[Message]:
             # Перейти на страницу откликов
             await page.goto(
                 "https://rabota.by/applicant/responses",
-                wait_until="networkidle",
+                wait_until="domcontentloaded",
                 timeout=30000,
             )
 
@@ -47,7 +47,7 @@ async def check_inbox(chat_id: str | int) -> List[Message]:
                 await ensure_logged_in(context, chat_id)
                 await page.goto(
                     "https://rabota.by/applicant/responses",
-                    wait_until="networkidle",
+                    wait_until="domcontentloaded",
                 )
 
             # Найти переписки
@@ -88,7 +88,7 @@ async def check_inbox(chat_id: str | int) -> List[Message]:
                     # Открыть переписку
                     if link:
                         await link.click()
-                        await page.wait_for_load_state("networkidle")
+                        await page.wait_for_load_state("domcontentloaded")
                         await page.wait_for_timeout(1500)
 
                     # Собрать сообщения
@@ -123,7 +123,7 @@ async def check_inbox(chat_id: str | int) -> List[Message]:
 
                     # Вернуться к списку
                     await page.go_back()
-                    await page.wait_for_load_state("networkidle")
+                    await page.wait_for_load_state("domcontentloaded")
                     await page.wait_for_timeout(1000)
 
                 except Exception as e:

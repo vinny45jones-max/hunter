@@ -11,7 +11,7 @@ async def send_reply(conversation_id: str, text: str, chat_id: str | int) -> Tup
         try:
             await page.goto(
                 f"https://rabota.by/applicant/responses/{conversation_id}",
-                wait_until="networkidle",
+                wait_until="domcontentloaded",
                 timeout=30000,
             )
 
@@ -24,7 +24,7 @@ async def send_reply(conversation_id: str, text: str, chat_id: str | int) -> Tup
                 await ensure_logged_in(context, chat_id)
                 await page.goto(
                     f"https://rabota.by/applicant/responses/{conversation_id}",
-                    wait_until="networkidle",
+                    wait_until="domcontentloaded",
                 )
 
             # Найти поле ввода ответа

@@ -59,7 +59,7 @@ async def parse_search_results(
 
             for page_num in range(max_pages):
                 url = f"{search_url}&page={page_num}"
-                await page.goto(url, wait_until="networkidle", timeout=30000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await _random_delay(1.5, 3.0)
 
                 cards = await page.query_selector_all(SELECTORS["vacancy_card"])

@@ -46,7 +46,7 @@ async def _is_authorised(page: Page) -> bool:
 
 
 async def _perform_login(page: Page, email: str, password: str) -> None:
-    await page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
+    await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
 
     # 1. "Я ищу работу"
     await page.click("text=Я ищу работу", timeout=10000)
@@ -78,7 +78,7 @@ async def _perform_login(page: Page, email: str, password: str) -> None:
 
     # 7. Submit
     await page.click('button[data-qa="submit-button"]', timeout=5000)
-    await page.wait_for_load_state("networkidle")
+    await page.wait_for_load_state("domcontentloaded")
 
 
 async def try_login(chat_id: str | int, email: str, password: str) -> bool:
@@ -112,7 +112,7 @@ async def ensure_logged_in(context: BrowserContext, chat_id: str | int) -> None:
     """
     page = await context.new_page()
     try:
-        await page.goto("https://rabota.by", wait_until="networkidle", timeout=30000)
+        await page.goto("https://rabota.by", wait_until="domcontentloaded", timeout=30000)
         if await _is_authorised(page):
             return
 
