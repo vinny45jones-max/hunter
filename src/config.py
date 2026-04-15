@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     # Шифрование паролей юзеров (Fernet base64 key)
     fernet_key: str
 
-    # rabota.by
-    rabota_email: str
-    rabota_password: str
+    # rabota.by (устаревшее: учётка теперь per-user в БД через онбординг)
+    rabota_email: str | None = None
+    rabota_password: str | None = None
 
     # Поиск
     search_queries: str = "директор,CEO,AI"
