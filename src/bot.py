@@ -474,37 +474,6 @@ async def onboard_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ─── /settings handlers ──────────────────────────
 
-async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _profile_exists():
-        await update.message.reply_text(
-            "Профиль не найден. Используйте /start для онбординга."
-        )
-        return ConversationHandler.END
-
-    profile_path = settings.candidate_profile_path
-    with open(profile_path, "r", encoding="utf-8") as f:
-        profile = yaml.safe_load(f)
-
-    cid = str(update.effective_chat.id)
-    email = await database.get_setting(cid, "rabota_email") or "не указан"
-    keywords = ", ".join(profile.get("search_keywords", []))
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Изменить email", callback_data="settings_email")],
-        [InlineKeyboardButton("Изменить пароль", callback_data="settings_password")],
-        [InlineKeyboardButton("Изменить ключевые слова", callback_data="settings_keywords")],
-        [InlineKeyboardButton("Загрузить новое резюме", callback_data="settings_resume")],
-    ])
-
-    await update.message.reply_text(
-        f"Текущие настройки:\n\n"
-        f"Имя: {profile.get('candidate_name', 'N/A')}\n"
-        f"Email: {email}\n"
-        f"Ключевые слова: {keywords}\n",
-        reply_markup=keyboard,
-    )
-    return SETTINGS_MENU
-
 
 async def settings_ask_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -757,10 +726,20 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     all_settings = await database.get_all_settings(chat_id)
 
+    defaults = {
+        "min_relevance_score": str(settings.min_relevance_score),
+        "max_pages": str(settings.max_pages),
+        "search_city": settings.search_city,
+        "search_queries": settings.search_queries,
+        "scrape_interval_minutes": str(settings.scrape_interval_minutes),
+        "message_check_interval_minutes": str(settings.message_check_interval_minutes),
+        "max_applies_per_day": str(settings.max_applies_per_day),
+    }
+
     lines = ["*Настройки*\n"]
     for key, label in EDITABLE_SETTINGS.items():
-        val = _escape_md(all_settings.get(key, "—"))
-        lines.append(f"{_escape_md(label)}: *{val}*")
+        val = all_settings.get(key) or defaults.get(key, "—")
+        lines.append(f"{_escape_md(label)}: *{_escape_md(val)}*")
 
     # Профиль — показываем только имя
     name = all_settings.get("candidate_name", "Не задано")
@@ -1245,42 +1224,6 @@ def create_app() -> Application:
         )
 
     _app.add_handler(onboard_conv)
-
-    # Settings conversation handler
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=".*per_message.*", category=UserWarning)
-        settings_conv = ConversationHandler(
-            entry_points=[
-                CommandHandler("settings", cmd_settings),
-            ],
-            states={
-                SETTINGS_MENU: [
-                    CallbackQueryHandler(settings_ask_email, pattern=r"^settings_email$"),
-                    CallbackQueryHandler(settings_ask_password, pattern=r"^settings_password$"),
-                    CallbackQueryHandler(settings_ask_keywords, pattern=r"^settings_keywords$"),
-                    CallbackQueryHandler(settings_ask_resume, pattern=r"^settings_resume$"),
-                ],
-                SETTINGS_EMAIL: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_email),
-                ],
-                SETTINGS_PASSWORD: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_password),
-                ],
-                SETTINGS_KEYWORDS: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_keywords),
-                ],
-                SETTINGS_RESUME: [
-                    MessageHandler(filters.Document.ALL, settings_save_resume),
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", settings_cancel),
-            ],
-            per_message=False,
-            per_chat=True,
-        )
-
-    _app.add_handler(settings_conv)
 
     # Reply conversation handler
     # per_message=False т.к. entry point — CallbackQuery, а ответ — Message
