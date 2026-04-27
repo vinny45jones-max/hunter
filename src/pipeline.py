@@ -30,17 +30,25 @@ async def run_pipeline_for_user(chat_id: str):
     try:
         await bot.send_text(chat_id, "🔍 Начинаю поиск вакансий...")
 
-        # 0. Логин
-        try:
-            async with browser_pool.acquire(chat_id) as ctx:
-                await auth.ensure_logged_in(ctx, chat_id)
-        except auth.LoginError as e:
-            log.warning(f"Pipeline [{chat_id}]: login failed: {e}")
-            await bot.send_text(
-                chat_id,
-                "❌ Не смог войти в rabota.by. Проверь креды в /settings.",
-            )
-            return
+        # 0. Логин (с ретраем на сетевую ошибку: рестарт браузера + повтор)
+        for attempt in range(2):
+            try:
+                async with browser_pool.acquire(chat_id) as ctx:
+                    await auth.ensure_logged_in(ctx, chat_id)
+                break
+            except auth.LoginError as e:
+                log.warning(f"Pipeline [{chat_id}]: login failed: {e}")
+                await bot.send_text(
+                    chat_id,
+                    "❌ Не смог войти в rabota.by. Проверь креды в /settings.",
+                )
+                return
+            except Exception as e:
+                if attempt == 0 and browser_pool.is_network_error(e):
+                    log.warning(f"Pipeline [{chat_id}]: network error on login, restarting browser: {e}")
+                    await browser_pool.restart()
+                    continue
+                raise
 
         # 1. Настройки юзера
         user_queries = await database.get_setting(chat_id, "search_queries", settings.search_queries)
@@ -181,16 +189,24 @@ async def check_messages_for_user(chat_id: str):
     log.info(f"Inbox [{chat_id}]: checking messages...")
 
     try:
-        try:
-            async with browser_pool.acquire(chat_id) as ctx:
-                await auth.ensure_logged_in(ctx, chat_id)
-        except auth.LoginError as e:
-            log.warning(f"Inbox [{chat_id}]: login failed: {e}")
-            await bot.send_text(
-                chat_id,
-                "❌ Не смог войти в rabota.by. Проверь креды в /settings.",
-            )
-            return
+        for attempt in range(2):
+            try:
+                async with browser_pool.acquire(chat_id) as ctx:
+                    await auth.ensure_logged_in(ctx, chat_id)
+                break
+            except auth.LoginError as e:
+                log.warning(f"Inbox [{chat_id}]: login failed: {e}")
+                await bot.send_text(
+                    chat_id,
+                    "❌ Не смог войти в rabota.by. Проверь креды в /settings.",
+                )
+                return
+            except Exception as e:
+                if attempt == 0 and browser_pool.is_network_error(e):
+                    log.warning(f"Inbox [{chat_id}]: network error on login, restarting browser: {e}")
+                    await browser_pool.restart()
+                    continue
+                raise
 
         new_messages = await inbox.check_inbox(chat_id)
 
