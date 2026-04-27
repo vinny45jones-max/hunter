@@ -4,6 +4,9 @@ import random
 from src.config import settings, log
 from src import database, scraper, ai_filter, bot, inbox, browser_pool, auth
 
+# Задержки между попытками логина при сетевой ошибке (сек). Длина = число попыток.
+LOGIN_RETRY_DELAYS = (0, 30, 60, 90)
+
 # Стоп-слова — вакансии с этими словами в названии отсекаются сразу
 STOP_WORDS = [
     "магазин", "школ", "детский сад", "аптек", "медсестр", "повар",
@@ -30,8 +33,12 @@ async def run_pipeline_for_user(chat_id: str):
     try:
         await bot.send_text(chat_id, "🔍 Начинаю поиск вакансий...")
 
-        # 0. Логин (с ретраем на сетевую ошибку: рестарт браузера + повтор)
-        for attempt in range(2):
+        # 0. Логин (с ретраем на сетевую ошибку: пауза + рестарт браузера + повтор)
+        total_attempts = len(LOGIN_RETRY_DELAYS)
+        for attempt, delay in enumerate(LOGIN_RETRY_DELAYS):
+            if delay:
+                log.info(f"Pipeline [{chat_id}]: ждём {delay}с перед попыткой {attempt + 1}/{total_attempts}")
+                await asyncio.sleep(delay)
             try:
                 async with browser_pool.acquire(chat_id) as ctx:
                     await auth.ensure_logged_in(ctx, chat_id)
@@ -44,8 +51,12 @@ async def run_pipeline_for_user(chat_id: str):
                 )
                 return
             except Exception as e:
-                if attempt == 0 and browser_pool.is_network_error(e):
-                    log.warning(f"Pipeline [{chat_id}]: network error on login, restarting browser: {e}")
+                is_last = attempt == total_attempts - 1
+                if not is_last and browser_pool.is_network_error(e):
+                    log.warning(
+                        f"Pipeline [{chat_id}]: network error on login "
+                        f"(попытка {attempt + 1}/{total_attempts}), restarting browser: {e}"
+                    )
                     await browser_pool.restart()
                     continue
                 raise
@@ -189,7 +200,11 @@ async def check_messages_for_user(chat_id: str):
     log.info(f"Inbox [{chat_id}]: checking messages...")
 
     try:
-        for attempt in range(2):
+        total_attempts = len(LOGIN_RETRY_DELAYS)
+        for attempt, delay in enumerate(LOGIN_RETRY_DELAYS):
+            if delay:
+                log.info(f"Inbox [{chat_id}]: ждём {delay}с перед попыткой {attempt + 1}/{total_attempts}")
+                await asyncio.sleep(delay)
             try:
                 async with browser_pool.acquire(chat_id) as ctx:
                     await auth.ensure_logged_in(ctx, chat_id)
@@ -202,8 +217,12 @@ async def check_messages_for_user(chat_id: str):
                 )
                 return
             except Exception as e:
-                if attempt == 0 and browser_pool.is_network_error(e):
-                    log.warning(f"Inbox [{chat_id}]: network error on login, restarting browser: {e}")
+                is_last = attempt == total_attempts - 1
+                if not is_last and browser_pool.is_network_error(e):
+                    log.warning(
+                        f"Inbox [{chat_id}]: network error on login "
+                        f"(попытка {attempt + 1}/{total_attempts}), restarting browser: {e}"
+                    )
                     await browser_pool.restart()
                     continue
                 raise
