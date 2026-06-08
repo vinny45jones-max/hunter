@@ -15,11 +15,13 @@ async def _fake_acquire(chat_id, save_on_exit=True):
 
 @pytest.mark.asyncio
 async def test_run_pipeline_for_user_login_fail(monkeypatch):
-    send_text = AsyncMock()
+    send_progress = AsyncMock(return_value=123)
+    update_progress = AsyncMock()
     ensure_logged_in = AsyncMock(side_effect=LoginError("bad creds"))
     parse_all_keywords = AsyncMock()
 
-    monkeypatch.setattr(pipeline.bot, "send_text", send_text)
+    monkeypatch.setattr(pipeline.bot, "send_progress", send_progress)
+    monkeypatch.setattr(pipeline.bot, "update_progress", update_progress)
     monkeypatch.setattr(pipeline.browser_pool, "acquire", _fake_acquire)
     monkeypatch.setattr(pipeline.auth, "ensure_logged_in", ensure_logged_in)
     monkeypatch.setattr(pipeline.scraper, "parse_all_keywords", parse_all_keywords)
@@ -28,9 +30,10 @@ async def test_run_pipeline_for_user_login_fail(monkeypatch):
 
     ensure_logged_in.assert_awaited_once()
     parse_all_keywords.assert_not_awaited()
-    # Первое — "Начинаю поиск", второе — уведомление об ошибке логина
-    assert send_text.await_count == 2
-    last_msg = send_text.await_args_list[-1].args[1]
+    # Старт — send_progress, уведомление об ошибке логина — update_progress
+    send_progress.assert_awaited_once()
+    update_progress.assert_awaited_once()
+    last_msg = update_progress.await_args.args[3]
     assert "rabota.by" in last_msg
     assert "/settings" in last_msg
 

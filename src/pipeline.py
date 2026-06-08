@@ -30,8 +30,9 @@ async def run_pipeline_for_user(chat_id: str):
     """Запуск пайплайна для одного юзера."""
     log.info(f"Pipeline [{chat_id}]: starting vacancy scan...")
 
+    pid = None
     try:
-        await bot.send_text(chat_id, "🔍 Начинаю поиск вакансий...")
+        pid = await bot.send_progress(chat_id, "🔍 Начинаю поиск вакансий...")
 
         # 0. Логин (с ретраем на сетевую ошибку: пауза + рестарт браузера + повтор)
         total_attempts = len(LOGIN_RETRY_DELAYS)
@@ -45,8 +46,8 @@ async def run_pipeline_for_user(chat_id: str):
                 break
             except auth.LoginError as e:
                 log.warning(f"Pipeline [{chat_id}]: login failed: {e}")
-                await bot.send_text(
-                    chat_id,
+                await bot.update_progress(
+                    chat_id, pid, 0,
                     "❌ Не смог войти в rabota.by. Проверь креды в /settings.",
                 )
                 return
@@ -60,6 +61,8 @@ async def run_pipeline_for_user(chat_id: str):
                     await browser_pool.restart()
                     continue
                 raise
+
+        await bot.update_progress(chat_id, pid, 10, "🔐 Вход выполнен. Сканирую вакансии...")
 
         # 1. Настройки юзера
         user_queries = await database.get_setting(chat_id, "search_queries", settings.search_queries)
@@ -75,10 +78,14 @@ async def run_pipeline_for_user(chat_id: str):
         new_vacancies = await database.filter_new(all_vacancies)
         if not new_vacancies:
             log.info(f"Pipeline [{chat_id}]: no new vacancies")
-            await bot.send_text(chat_id, "Новых вакансий не найдено.")
+            await bot.update_progress(chat_id, pid, 100, f"Найдено {len(all_vacancies)}, новых нет.")
             return
 
         log.info(f"Pipeline [{chat_id}]: {len(new_vacancies)} new vacancies found")
+        await bot.update_progress(
+            chat_id, pid, 35,
+            f"🔎 Найдено {len(all_vacancies)}, новых {len(new_vacancies)}. Фильтрую..."
+        )
 
         # 3. Стоп-слова фильтр
         before_stop = len(new_vacancies)
@@ -88,13 +95,12 @@ async def run_pipeline_for_user(chat_id: str):
             log.info(f"Pipeline [{chat_id}]: стоп-слова отсекли {filtered_out} вакансий")
 
         if not new_vacancies:
-            await bot.send_text(chat_id, "Новых подходящих вакансий не найдено (все отсечены стоп-словами).")
+            await bot.update_progress(chat_id, pid, 100, "Все новые отсечены стоп-словами.")
             return
 
-        await bot.send_text(
-            chat_id,
-            f"Найдено {len(all_vacancies)} вакансий, {len(new_vacancies)} новых "
-            f"(отсечено стоп-словами: {filtered_out}). Быстрая оценка..."
+        await bot.update_progress(
+            chat_id, pid, 45,
+            f"Новых {len(new_vacancies)} (стоп-слова: -{filtered_out}). Быстрая оценка..."
         )
 
         # 4. Батч-оценка по названиям (быстрая, без описаний)
@@ -102,7 +108,7 @@ async def run_pipeline_for_user(chat_id: str):
             batch_scores = await ai_filter.batch_evaluate_titles(new_vacancies, chat_id)
         except Exception as e:
             log.error(f"Pipeline [{chat_id}]: батч-оценка упала: {e}")
-            await bot.send_text(chat_id, f"⚠️ Ошибка AI при быстрой оценке: {e}")
+            await bot.update_progress(chat_id, pid, 100, f"⚠️ Ошибка AI при быстрой оценке: {e}")
             return
         promising = []
         for i, v in enumerate(new_vacancies):
@@ -117,23 +123,25 @@ async def run_pipeline_for_user(chat_id: str):
         log.info(f"Pipeline [{chat_id}]: батч-оценка — {len(promising)} перспективных из {len(new_vacancies)}")
 
         if not promising:
-            await bot.send_text(chat_id, "После быстрой оценки подходящих вакансий не найдено.")
+            await bot.update_progress(chat_id, pid, 100, "После быстрой оценки подходящих не найдено.")
             return
 
-        await bot.send_text(chat_id, f"Перспективных: {len(promising)}. Загружаю описания...")
+        n_prom = len(promising)
+        await bot.update_progress(chat_id, pid, 55, f"Перспективных: {n_prom}. Загружаю описания...")
 
         # 5. Загрузить описания только для перспективных
-        for v in promising:
+        for i, v in enumerate(promising):
             try:
                 v.description = await scraper.get_full_description(v.url, chat_id)
                 await asyncio.sleep(random.uniform(1, 2))
             except Exception as e:
                 log.warning(f"Pipeline [{chat_id}]: failed to get description for {v.url}: {e}")
+            await bot.update_progress(chat_id, pid, 55 + int(15 * (i + 1) / n_prom), f"Описания {i + 1}/{n_prom}")
 
         # 6. Полная AI-оценка с описанием + cover letter (один вызов)
         min_score = await database.get_setting_int(chat_id, "min_relevance_score", settings.min_relevance_score)
-        await bot.send_text(chat_id, f"Оцениваю {len(promising)} вакансий с описаниями...")
-        for v in promising:
+        await bot.update_progress(chat_id, pid, 70, f"Оцениваю {n_prom} вакансий с описаниями...")
+        for i, v in enumerate(promising):
             try:
                 result = await ai_filter.evaluate_and_cover(v, chat_id, min_score)
                 v.relevance_score = result["score"]
@@ -144,12 +152,13 @@ async def run_pipeline_for_user(chat_id: str):
                     v.status = "filtered"
             except Exception as e:
                 log.warning(f"Pipeline [{chat_id}]: AI filter error for {v.title}: {e}")
-                await bot.send_text(chat_id, f"⚠️ Ошибка AI для «{v.title}»: {type(e).__name__}")
 
             await database.save_vacancy(v)
+            await bot.update_progress(chat_id, pid, 70 + int(25 * (i + 1) / n_prom), f"AI-оценка {i + 1}/{n_prom}")
 
         # 7. Отправить в Telegram
         relevant = [v for v in promising if v.status == "filtered"]
+        await bot.update_progress(chat_id, pid, 97, f"Отправляю подходящих: {len(relevant)}...")
         for v in relevant:
             try:
                 await bot.send_vacancy_card(chat_id, v)
@@ -170,17 +179,20 @@ async def run_pipeline_for_user(chat_id: str):
             f"Total={len(all_vacancies)}, new={len(new_vacancies)}, "
             f"promising={len(promising)}, relevant={len(relevant)}"
         )
-        await bot.send_text(
-            chat_id,
+        await bot.update_progress(
+            chat_id, pid, 100,
             f"✅ Поиск завершён.\n"
             f"Всего: {len(all_vacancies)}, новых: {len(new_vacancies)}, "
-            f"перспективных: {len(promising)}, подходящих: {len(relevant)}"
+            f"перспективных: {n_prom}, подходящих: {len(relevant)}"
         )
 
     except Exception as e:
         log.error(f"Pipeline [{chat_id}] error: {e}")
         try:
-            await bot.send_text(chat_id, f"⚠️ Ошибка пайплайна: {e}")
+            if pid:
+                await bot.update_progress(chat_id, pid, 100, f"⚠️ Ошибка пайплайна: {e}")
+            else:
+                await bot.send_text(chat_id, f"⚠️ Ошибка пайплайна: {e}")
         except Exception:
             pass
 

@@ -160,6 +160,37 @@ async def send_text(chat_id: str, text: str):
     )
 
 
+def _progress_bar(pct, width: int = 10) -> str:
+    pct = max(0, min(100, int(pct)))
+    filled = round(pct / 100 * width)
+    return "▰" * filled + "▱" * (width - filled)
+
+
+async def send_progress(chat_id: str, label: str):
+    """Стартовое прогресс-сообщение, возвращает message_id (или None)."""
+    if not _app:
+        return None
+    msg = await _app.bot.send_message(
+        chat_id=chat_id,
+        text=f"{_progress_bar(0)} 0%\n{label}",
+    )
+    return msg.message_id
+
+
+async def update_progress(chat_id: str, message_id, pct, label: str):
+    """Правит прогресс-сообщение. Глушит ошибки (not modified / лимиты Telegram)."""
+    if not _app or not message_id:
+        return
+    try:
+        await _app.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"{_progress_bar(pct)} {int(pct)}%\n{label}",
+        )
+    except Exception:
+        pass
+
+
 # ─── Command handlers ───────────────────────────
 
 def _profile_exists() -> bool:
