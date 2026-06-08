@@ -65,7 +65,7 @@ async def parse_search_results(
                 cards = await page.query_selector_all(SELECTORS["vacancy_card"])
                 if not cards:
                     log.info(f"No cards found on page {page_num} for '{keyword}'")
-                    break
+                    return vacancies
 
                 for card in cards:
                     try:
@@ -116,7 +116,7 @@ async def parse_search_results(
                     next_btn = await page.query_selector(SELECTORS["next_page"])
                     if not next_btn:
                         log.info(f"No next page after page {page_num + 1}")
-                        break
+                        return vacancies
                     await _random_delay()
 
                 log.info(f"Found {len(vacancies)} vacancies for '{keyword}'")
