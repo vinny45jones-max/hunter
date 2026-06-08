@@ -449,7 +449,7 @@ async def onboard_confirm_go(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _set_menu_for_chat(query.message.get_bot(), query.message.chat_id)
 
     from src import pipeline
-    await pipeline.run_pipeline()
+    await pipeline.run_pipeline_for_user(str(query.message.chat_id))
     await query.message.reply_text("Первый поиск завершён. Используйте /stats для статистики.")
 
     return ConversationHandler.END
@@ -747,7 +747,7 @@ EDITABLE_SETTINGS = {
     "max_pages": "Макс. страниц поиска",
     "search_city": "Город поиска",
     "search_queries": "Ключевые слова (через запятую)",
-    "scrape_interval_minutes": "Интервал поиска (мин)",
+    "scrape_hour": "Час ежедневного парсинга (0-23)",
     "message_check_interval_minutes": "Проверка сообщений (мин)",
     "max_applies_per_day": "Макс. откликов в день",
 }
@@ -762,7 +762,7 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "max_pages": str(settings.max_pages),
         "search_city": settings.search_city,
         "search_queries": settings.search_queries,
-        "scrape_interval_minutes": str(settings.scrape_interval_minutes),
+        "scrape_hour": str(settings.scrape_hour),
         "message_check_interval_minutes": str(settings.message_check_interval_minutes),
         "max_applies_per_day": str(settings.max_applies_per_day),
     }
@@ -830,7 +830,7 @@ async def receive_setting_value(update: Update, context: ContextTypes.DEFAULT_TY
     value = update.message.text.strip()
 
     # Валидация числовых настроек
-    int_keys = {"min_relevance_score", "max_pages", "scrape_interval_minutes",
+    int_keys = {"min_relevance_score", "max_pages", "scrape_hour",
                 "message_check_interval_minutes", "max_applies_per_day"}
     if key in int_keys:
         try:

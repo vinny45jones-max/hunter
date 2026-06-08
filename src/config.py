@@ -30,7 +30,8 @@ class Settings(BaseSettings):
     search_city: str = "Минск"
     search_area_id: int = 16  # rabota.by area code: 16=Минск, 1002=Беларусь
     min_relevance_score: int = 50
-    scrape_interval_minutes: int = 30
+    scrape_hour: int = 7  # час ежедневного парсинга (0-23) в timezone
+    timezone: str = "Europe/Minsk"
     message_check_interval_minutes: int = 5
     max_pages: int = 1
 

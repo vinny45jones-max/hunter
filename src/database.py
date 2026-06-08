@@ -531,7 +531,7 @@ async def init_user_defaults(chat_id: str):
         "max_pages": str(settings.max_pages),
         "search_city": settings.search_city,
         "search_queries": settings.search_queries,
-        "scrape_interval_minutes": str(settings.scrape_interval_minutes),
+        "scrape_hour": str(settings.scrape_hour),
         "message_check_interval_minutes": str(settings.message_check_interval_minutes),
         "max_applies_per_day": str(settings.max_applies_per_day),
     }

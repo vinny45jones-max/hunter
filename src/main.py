@@ -51,7 +51,7 @@ async def main():
     # 1.1 Бэкфилл профиля из profile.yml для юзеров, прошедших онбординг до фикса
     await _backfill_profile_from_yaml()
 
-    # 2. Telegram bot (запуск пайплайна — только по команде /search)
+    # 2. Telegram bot (пайплайн — по команде /search и по расписанию ниже)
     app = bot.create_app()
 
     log.info("Starting Telegram polling...")
@@ -78,14 +78,69 @@ async def main():
             # Windows — signal handlers not supported in asyncio
             pass
 
+    # 3. Расписание: ежедневный парсинг в фикс. час + интервальная проверка входящих.
+    # Прерываемый sleep через stop_event — для чистого шатдауна.
+    async def _interruptible_sleep(seconds: float) -> bool:
+        """Спит до timeout или до stop_event. True если пора выходить."""
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=seconds)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def _interval_loop(coro_fn, minutes: int, name: str):
+        while not stop_event.is_set():
+            if await _interruptible_sleep(minutes * 60):
+                break
+            try:
+                log.info(f"Scheduler[{name}]: запуск")
+                await coro_fn()
+            except Exception as e:
+                log.error(f"Scheduler[{name}] error: {e}")
+
+    async def _daily_loop(coro_fn, hour: int, tz_name: str, name: str):
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name)
+        while not stop_event.is_set():
+            now = datetime.now(tz)
+            nxt = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            wait = (nxt - now).total_seconds()
+            log.info(f"Scheduler[{name}]: следующий запуск {nxt:%Y-%m-%d %H:%M} {tz_name}")
+            if await _interruptible_sleep(wait):
+                break
+            try:
+                log.info(f"Scheduler[{name}]: запуск")
+                await coro_fn()
+            except Exception as e:
+                log.error(f"Scheduler[{name}] error: {e}")
+
+    bg_tasks = [
+        asyncio.create_task(
+            _daily_loop(pipeline.run_pipeline, settings.scrape_hour, settings.timezone, "scrape")
+        ),
+        asyncio.create_task(
+            _interval_loop(pipeline.check_messages, settings.message_check_interval_minutes, "messages")
+        ),
+    ]
+    log.info(
+        f"Scheduler: парсинг ежедневно в {settings.scrape_hour:02d}:00 ({settings.timezone}), "
+        f"сообщения каждые {settings.message_check_interval_minutes} мин"
+    )
+
     # Keep running until signal
     try:
         await stop_event.wait()
     except (KeyboardInterrupt, SystemExit):
-        pass
+        stop_event.set()
 
     # Cleanup
     log.info("Shutting down...")
+    for t in bg_tasks:
+        t.cancel()
+    await asyncio.gather(*bg_tasks, return_exceptions=True)
     await app.updater.stop()
     await app.stop()
     await app.shutdown()
