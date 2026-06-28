@@ -12,7 +12,7 @@ from docx import Document
 from src.config import settings, log
 
 _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=5)
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 
 EXTRACT_PROMPT = """Извлеки из резюме структурированный профиль кандидата.
 

@@ -9,7 +9,7 @@ from src.models import Vacancy, Message
 from src import database
 
 _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=5)
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = (
     "Ты -- рекрутер-аналитик. Оцениваешь релевантность вакансии для кандидата. "
