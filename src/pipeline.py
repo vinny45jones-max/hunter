@@ -43,6 +43,22 @@ async def run_pipeline_for_user(chat_id: str):
             )
             return
 
+        # 0.6 Досылка ранее найденных, но не доставленных в TG (резильентно к обрывам прогона).
+        # Отправка идёт до логина — не зависит от доступности rabota.by.
+        backlog = await database.get_unsent_filtered(limit=20)
+        if backlog:
+            await bot.update_progress(chat_id, pid, 5, f"📬 Досылаю {len(backlog)} ранее найденных вакансий...")
+            sent_n = 0
+            for v in backlog:
+                try:
+                    await bot.send_vacancy_card(chat_id, v)
+                    await database.update_status(v.id, "sent_to_tg")
+                    sent_n += 1
+                    await asyncio.sleep(0.5)  # бережём rate-limit Telegram
+                except Exception as e:
+                    log.error(f"Pipeline [{chat_id}]: backlog send error for {v.title}: {e}")
+            log.info(f"Pipeline [{chat_id}]: досланы {sent_n}/{len(backlog)} из бэклога filtered")
+
         # 0. Логин (с ретраем на сетевую ошибку: пауза + рестарт браузера + повтор)
         total_attempts = len(LOGIN_RETRY_DELAYS)
         for attempt, delay in enumerate(LOGIN_RETRY_DELAYS):

@@ -239,6 +239,20 @@ async def get_last_vacancies(limit: int = 5) -> List[Vacancy]:
     return [_row_to_vacancy(r) for r in rows]
 
 
+async def get_unsent_filtered(limit: int = 20) -> List[Vacancy]:
+    """Вакансии, прошедшие AI-фильтр (status='filtered'), но не доставленные в TG.
+    По убыванию релевантности — для досылки бэклога в начале пайплайна."""
+    async with aiosqlite.connect(_db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM vacancies WHERE status='filtered' "
+            "ORDER BY relevance_score DESC, id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+    return [_row_to_vacancy(r) for r in rows]
+
+
 async def get_stats() -> dict:
     async with aiosqlite.connect(_db_path) as db:
         total = (await (await db.execute("SELECT COUNT(*) FROM vacancies")).fetchone())[0]

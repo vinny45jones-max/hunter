@@ -27,6 +27,7 @@ async def test_run_pipeline_for_user_login_fail(monkeypatch):
     monkeypatch.setattr(pipeline.scraper, "parse_all_keywords", parse_all_keywords)
     # профиль задан — иначе гард выйдет до логина
     monkeypatch.setattr(pipeline.database, "get_setting", AsyncMock(return_value="Профиль есть"))
+    monkeypatch.setattr(pipeline.database, "get_unsent_filtered", AsyncMock(return_value=[]))
 
     await pipeline.run_pipeline_for_user("42")
 
@@ -81,3 +82,33 @@ async def test_run_pipeline_for_user_no_profile(monkeypatch):
     msg = update_progress.await_args.args[3]
     assert "Профиль не заполнен" in msg
     assert "/start" in msg
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_flushes_backlog(monkeypatch):
+    """Недоставленные filtered-вакансии досылаются в начале /search и помечаются sent_to_tg."""
+    from src.models import Vacancy
+
+    send_progress = AsyncMock(return_value=123)
+    update_progress = AsyncMock()
+    send_vacancy_card = AsyncMock()
+    update_status = AsyncMock()
+    ensure_logged_in = AsyncMock(side_effect=LoginError("stop"))  # обрываем сразу после флаша
+
+    backlog = [Vacancy(external_id="1", url="u", title="Коммерческий директор",
+                       id=7, status="filtered", relevance_score=92)]
+
+    monkeypatch.setattr(pipeline.bot, "send_progress", send_progress)
+    monkeypatch.setattr(pipeline.bot, "update_progress", update_progress)
+    monkeypatch.setattr(pipeline.bot, "send_vacancy_card", send_vacancy_card)
+    monkeypatch.setattr(pipeline.browser_pool, "acquire", _fake_acquire)
+    monkeypatch.setattr(pipeline.auth, "ensure_logged_in", ensure_logged_in)
+    monkeypatch.setattr(pipeline.database, "get_setting", AsyncMock(return_value="Профиль есть"))
+    monkeypatch.setattr(pipeline.database, "get_unsent_filtered", AsyncMock(return_value=backlog))
+    monkeypatch.setattr(pipeline.database, "update_status", update_status)
+
+    await pipeline.run_pipeline_for_user("42")
+
+    send_vacancy_card.assert_awaited_once()
+    assert send_vacancy_card.await_args.args[1].id == 7
+    update_status.assert_awaited_once_with(7, "sent_to_tg")
