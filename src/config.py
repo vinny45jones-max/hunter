@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Поиск
     search_queries: str = "директор,CEO,AI"
     search_city: str = "Минск"
-    search_area_id: int = 16  # rabota.by area code: 16=Минск, 1002=Беларусь
+    search_area_id: int = 16  # rabota.by area code: 16=вся Беларусь, 1002=Минск, 1007=Брест
     min_relevance_score: int = 50
     scrape_hour: int = 7  # час ежедневного парсинга (0-23) в timezone
     timezone: str = "Europe/Minsk"
@@ -55,6 +55,27 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# rabota.by area-коды (дерево hh.ru). 16 = вся Беларусь.
+CITY_AREA = {
+    "минск": 1002,
+    "брест": 1007,
+    "гомель": 1003,
+    "гродно": 1006,
+    "витебск": 1005,
+    "могилёв": 1004,
+    "могилев": 1004,
+    "беларусь": 16,
+    "вся беларусь": 16,
+}
+
+
+def resolve_area_id(city: str | None) -> int:
+    """Город (per-user search_city) → area-код rabota.by. Пусто/не распознан → дефолт."""
+    if city:
+        return CITY_AREA.get(city.strip().lower(), settings.search_area_id)
+    return settings.search_area_id
 
 # Логгирование
 logging.basicConfig(

@@ -1,7 +1,7 @@
 import asyncio
 import random
 
-from src.config import settings, log
+from src.config import settings, log, resolve_area_id
 from src import database, scraper, ai_filter, bot, inbox, browser_pool, auth
 
 # Задержки между попытками логина при сетевой ошибке (сек). Длина = число попыток.
@@ -68,10 +68,12 @@ async def run_pipeline_for_user(chat_id: str):
         user_queries = await database.get_setting(chat_id, "search_queries", settings.search_queries)
         user_keywords = [q.strip() for q in user_queries.split(",") if q.strip()]
         user_max_pages = await database.get_setting_int(chat_id, "max_pages", settings.max_pages)
+        user_city = await database.get_setting(chat_id, "search_city", None)
+        area_id = resolve_area_id(user_city)
 
         # 2. Скрапинг
         all_vacancies = await scraper.parse_all_keywords(
-            chat_id, keywords=user_keywords, max_pages=user_max_pages
+            chat_id, keywords=user_keywords, max_pages=user_max_pages, area_id=area_id
         )
 
         # 3. Дедупликация

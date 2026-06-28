@@ -45,16 +45,19 @@ async def parse_search_results(
     keyword: str,
     chat_id: str | int,
     max_pages: int = None,
+    area_id: int = None,
 ) -> List[Vacancy]:
     if max_pages is None:
         max_pages = settings.max_pages
+    if area_id is None:
+        area_id = settings.search_area_id
 
     for attempt in range(2):
         vacancies: List[Vacancy] = []
         try:
             async with browser_pool.acquire(chat_id) as context:
                 page = await context.new_page()
-                search_url = f"{BASE_URL}/search/vacancy?text={keyword}&area={settings.search_area_id}"
+                search_url = f"{BASE_URL}/search/vacancy?text={keyword}&area={area_id}"
                 log.info(f"Scraping: {keyword} -> {search_url}")
 
                 for page_num in range(max_pages):
@@ -62,62 +65,58 @@ async def parse_search_results(
                     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     await _random_delay(1.5, 3.0)
 
-                cards = await page.query_selector_all(SELECTORS["vacancy_card"])
-                if not cards:
-                    log.info(f"No cards found on page {page_num} for '{keyword}'")
-                    return vacancies
+                    cards = await page.query_selector_all(SELECTORS["vacancy_card"])
+                    if not cards:
+                        log.info(f"No cards on page {page_num} for '{keyword}' — стоп")
+                        break
 
-                for card in cards:
-                    try:
-                        title_el = await card.query_selector(SELECTORS["vacancy_title"])
-                        if not title_el:
+                    for card in cards:
+                        try:
+                            title_el = await card.query_selector(SELECTORS["vacancy_title"])
+                            if not title_el:
+                                continue
+
+                            title = (await title_el.inner_text()).strip()
+                            href = await title_el.get_attribute("href")
+                            if not href:
+                                continue
+                            url_full = urljoin(BASE_URL, href)
+
+                            external_id = _extract_external_id(url_full)
+                            if not external_id:
+                                continue
+
+                            company_el = await card.query_selector(SELECTORS["vacancy_company"])
+                            company = (await company_el.inner_text()).strip() if company_el else None
+
+                            salary_el = await card.query_selector(SELECTORS["vacancy_salary"])
+                            salary = None
+                            if salary_el:
+                                raw_salary = (await salary_el.inner_text()).strip()
+                                # div[class*='compensation'] захватывает и "Опыт ..." — берём первую строку
+                                first_line = raw_salary.split("\n")[0].strip() if raw_salary else ""
+                                # Отсечь фейковую зарплату: если текст только "Опыт ..." — это не зарплата
+                                if first_line and not first_line.startswith("Опыт"):
+                                    salary = first_line
+
+                            city_el = await card.query_selector(SELECTORS["vacancy_city"])
+                            city = (await city_el.inner_text()).strip() if city_el else None
+
+                            vacancies.append(Vacancy(
+                                external_id=external_id,
+                                url=url_full,
+                                title=title,
+                                company=company,
+                                salary=salary,
+                                city=city,
+                            ))
+                        except Exception as e:
+                            log.warning(f"Error parsing card: {e}")
                             continue
 
-                        title = (await title_el.inner_text()).strip()
-                        href = await title_el.get_attribute("href")
-                        if not href:
-                            continue
-                        url_full = urljoin(BASE_URL, href)
-
-                        external_id = _extract_external_id(url_full)
-                        if not external_id:
-                            continue
-
-                        company_el = await card.query_selector(SELECTORS["vacancy_company"])
-                        company = (await company_el.inner_text()).strip() if company_el else None
-
-                        salary_el = await card.query_selector(SELECTORS["vacancy_salary"])
-                        salary = None
-                        if salary_el:
-                            raw_salary = (await salary_el.inner_text()).strip()
-                            # div[class*='compensation'] захватывает и "Опыт ..." — берём первую строку
-                            first_line = raw_salary.split("\n")[0].strip() if raw_salary else ""
-                            # Отсечь фейковую зарплату: если текст только "Опыт ..." — это не зарплата
-                            if first_line and not first_line.startswith("Опыт"):
-                                salary = first_line
-
-                        city_el = await card.query_selector(SELECTORS["vacancy_city"])
-                        city = (await city_el.inner_text()).strip() if city_el else None
-
-                        vacancies.append(Vacancy(
-                            external_id=external_id,
-                            url=url_full,
-                            title=title,
-                            company=company,
-                            salary=salary,
-                            city=city,
-                        ))
-                    except Exception as e:
-                        log.warning(f"Error parsing card: {e}")
-                        continue
-
-                # Пагинация: проверяем есть ли следующая страница
-                if page_num < max_pages - 1:
-                    next_btn = await page.query_selector(SELECTORS["next_page"])
-                    if not next_btn:
-                        log.info(f"No next page after page {page_num + 1}")
-                        return vacancies
-                    await _random_delay()
+                    # вежливая пауза между страницами
+                    if page_num < max_pages - 1:
+                        await _random_delay()
 
                 log.info(f"Found {len(vacancies)} vacancies for '{keyword}'")
             return vacancies
@@ -165,6 +164,7 @@ async def parse_all_keywords(
     chat_id: str | int,
     keywords: List[str] = None,
     max_pages: int = None,
+    area_id: int = None,
 ) -> List[Vacancy]:
     if keywords is None:
         keywords = settings.search_keywords
@@ -172,7 +172,7 @@ async def parse_all_keywords(
     seen_ids = set()
 
     for keyword in keywords:
-        vacancies = await parse_search_results(keyword, chat_id, max_pages=max_pages)
+        vacancies = await parse_search_results(keyword, chat_id, max_pages=max_pages, area_id=area_id)
         for v in vacancies:
             if v.external_id not in seen_ids:
                 seen_ids.add(v.external_id)
