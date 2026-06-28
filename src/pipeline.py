@@ -34,6 +34,15 @@ async def run_pipeline_for_user(chat_id: str):
     try:
         pid = await bot.send_progress(chat_id, "🔍 Начинаю поиск вакансий...")
 
+        # 0.5 Профиль обязателен — без него AI зарежет все вакансии (score < порога)
+        candidate_profile = await database.get_setting(chat_id, "candidate_profile")
+        if not candidate_profile or candidate_profile.strip() in ("", "Профиль не заполнен"):
+            await bot.update_progress(
+                chat_id, pid, 100,
+                "⚠️ Профиль не заполнен — загрузи резюме через /start, иначе оценка зарежет все вакансии.",
+            )
+            return
+
         # 0. Логин (с ретраем на сетевую ошибку: пауза + рестарт браузера + повтор)
         total_attempts = len(LOGIN_RETRY_DELAYS)
         for attempt, delay in enumerate(LOGIN_RETRY_DELAYS):

@@ -608,6 +608,11 @@ async def settings_save_keywords(update: Update, context: ContextTypes.DEFAULT_T
     with open(profile_path, "w", encoding="utf-8") as f:
         yaml.dump(profile, f, allow_unicode=True, default_flow_style=False)
 
+    # Скрапер берёт ключевые слова из search_queries в БД — пишем туда же
+    await database.set_setting(
+        str(update.effective_chat.id), "search_queries", ", ".join(keywords)
+    )
+
     await update.message.reply_text(
         f"Ключевые слова обновлены: {', '.join(keywords)}"
     )
@@ -663,8 +668,11 @@ async def settings_save_resume(update: Update, context: ContextTypes.DEFAULT_TYP
     with open(profile_path, "w", encoding="utf-8") as f:
         yaml.dump(new_profile, f, allow_unicode=True, default_flow_style=False)
 
-    # Сбрасываем кеш профиля
-    ai_filter._profile_cache = None
+    # Профиль читается из БД (get_candidate_info) — пишем туда, как в онбординге
+    cid = str(update.effective_chat.id)
+    await database.set_setting(cid, "candidate_name", profile.name)
+    await database.set_setting(cid, "candidate_profile", profile.summary)
+    await database.set_setting(cid, "search_queries", ", ".join(profile.search_keywords))
 
     await update.message.reply_text(
         f"Резюме обновлено!\n"

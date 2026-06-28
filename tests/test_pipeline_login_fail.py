@@ -25,6 +25,8 @@ async def test_run_pipeline_for_user_login_fail(monkeypatch):
     monkeypatch.setattr(pipeline.browser_pool, "acquire", _fake_acquire)
     monkeypatch.setattr(pipeline.auth, "ensure_logged_in", ensure_logged_in)
     monkeypatch.setattr(pipeline.scraper, "parse_all_keywords", parse_all_keywords)
+    # профиль задан — иначе гард выйдет до логина
+    monkeypatch.setattr(pipeline.database, "get_setting", AsyncMock(return_value="Профиль есть"))
 
     await pipeline.run_pipeline_for_user("42")
 
@@ -55,3 +57,27 @@ async def test_check_messages_for_user_login_fail(monkeypatch):
     check_inbox.assert_not_awaited()
     send_text.assert_awaited_once()
     assert "rabota.by" in send_text.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_for_user_no_profile(monkeypatch):
+    """Без candidate_profile пайплайн выходит до логина с понятным сообщением."""
+    send_progress = AsyncMock(return_value=123)
+    update_progress = AsyncMock()
+    ensure_logged_in = AsyncMock()
+    parse_all_keywords = AsyncMock()
+
+    monkeypatch.setattr(pipeline.bot, "send_progress", send_progress)
+    monkeypatch.setattr(pipeline.bot, "update_progress", update_progress)
+    monkeypatch.setattr(pipeline.browser_pool, "acquire", _fake_acquire)
+    monkeypatch.setattr(pipeline.auth, "ensure_logged_in", ensure_logged_in)
+    monkeypatch.setattr(pipeline.scraper, "parse_all_keywords", parse_all_keywords)
+    monkeypatch.setattr(pipeline.database, "get_setting", AsyncMock(return_value=None))
+
+    await pipeline.run_pipeline_for_user("42")
+
+    ensure_logged_in.assert_not_awaited()
+    parse_all_keywords.assert_not_awaited()
+    msg = update_progress.await_args.args[3]
+    assert "Профиль не заполнен" in msg
+    assert "/start" in msg
