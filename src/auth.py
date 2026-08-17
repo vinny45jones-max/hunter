@@ -191,6 +191,7 @@ async def ensure_logged_in(context: BrowserContext, chat_id: str | int) -> None:
         await _perform_login(page, email, password)
 
         if not await _is_authorised(page):
+            await _dump_debug(page, chat_id, "ensure_failed")
             raise LoginError(f"login failed for chat_id={chat_id}")
 
         await browser_pool.save_context(context, chat_id)
