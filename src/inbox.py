@@ -1,7 +1,7 @@
 import hashlib
 from typing import List
 
-from src.config import log
+from src.config import settings, log
 from src.models import Message
 from src import browser_pool
 
@@ -34,7 +34,7 @@ async def check_inbox(chat_id: str | int) -> List[Message]:
             await page.goto(
                 "https://rabota.by/applicant/responses",
                 wait_until="domcontentloaded",
-                timeout=30000,
+                timeout=settings.nav_timeout_ms,
             )
 
             # Проверить авторизацию

@@ -5,7 +5,13 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import urlparse
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Playwright
+from playwright.async_api import (
+    async_playwright,
+    Browser,
+    BrowserContext,
+    Playwright,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 from src.config import settings, log
 
@@ -169,7 +175,13 @@ NETWORK_ERRORS = (
 
 
 def is_network_error(exc: Exception) -> bool:
+    # Таймаут навигации через медленный прокси — тоже сетевая проблема:
+    # лечится рестартом браузера и повтором, а не считается «нет данных».
+    if isinstance(exc, PlaywrightTimeoutError):
+        return True
     msg = str(exc)
+    if "Timeout" in msg and "exceeded" in msg:
+        return True
     return any(code in msg for code in NETWORK_ERRORS)
 
 

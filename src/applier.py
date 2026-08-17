@@ -1,7 +1,7 @@
 import os
 from typing import Tuple
 
-from src.config import log
+from src.config import settings, log
 from src.models import Vacancy
 from src.scraper import SELECTORS
 from src import browser_pool, auth
@@ -24,13 +24,13 @@ async def apply_to_vacancy(vacancy: Vacancy, chat_id: str | int) -> Tuple[bool, 
         page = await context.new_page()
 
         try:
-            await page.goto(vacancy.url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(vacancy.url, wait_until="domcontentloaded", timeout=settings.nav_timeout_ms)
 
             # Проверить авторизацию
             if not await _check_auth(page):
                 log.info(f"Apply [{chat_id}]: session expired, re-authenticating")
                 await auth.ensure_logged_in(page.context, chat_id)
-                await page.goto(vacancy.url, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(vacancy.url, wait_until="domcontentloaded", timeout=settings.nav_timeout_ms)
 
             # Проверить что вакансия не закрыта
             page_text = await page.inner_text("body")

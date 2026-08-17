@@ -105,7 +105,17 @@ async def run_pipeline_for_user(chat_id: str):
         new_vacancies = await database.filter_new(all_vacancies)
         if not new_vacancies:
             log.info(f"Pipeline [{chat_id}]: no new vacancies")
-            await bot.update_progress(chat_id, pid, 100, f"Найдено {len(all_vacancies)}, новых нет.")
+            if not all_vacancies:
+                # Пустая выдача по всем ключевым словам — почти всегда поломка
+                # (таймаут сайта или съехавшие селекторы), а не отсутствие вакансий.
+                log.warning(f"Pipeline [{chat_id}]: scraper returned 0 vacancies for all keywords")
+                await bot.update_progress(
+                    chat_id, pid, 100,
+                    "⚠️ Сайт не отдал ни одной вакансии. Возможен сбой rabota.by "
+                    "или изменение вёрстки — попробуй /search позже.",
+                )
+            else:
+                await bot.update_progress(chat_id, pid, 100, f"Найдено {len(all_vacancies)}, новых нет.")
             return
 
         log.info(f"Pipeline [{chat_id}]: {len(new_vacancies)} new vacancies found")

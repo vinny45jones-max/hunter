@@ -146,3 +146,19 @@ async def test_semaphore_serialises_concurrent_acquires(tmp_path, monkeypatch):
         await asyncio.gather(worker("a"), worker("b"), worker("c"))
 
     assert peak == 1
+
+
+def test_is_network_error_covers_navigation_timeout():
+    """Timeout goto через медленный прокси — сетевая ошибка, а не «нет данных»."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    err = PlaywrightTimeoutError(
+        'Page.goto: Timeout 30000ms exceeded.\n'
+        'Call log:\n  - navigating to "https://rabota.by/", waiting until "domcontentloaded"'
+    )
+    assert browser_pool.is_network_error(err) is True
+    assert browser_pool.is_network_error(Exception("Page.goto: Timeout 60000ms exceeded.")) is True
+
+
+def test_is_network_error_ignores_unrelated():
+    assert browser_pool.is_network_error(ValueError("bad selector")) is False

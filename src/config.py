@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # Прокси для Playwright (формат: http://user:pass@host:port или http://host:port)
     proxy_url: str | None = None
 
+    # Таймаут навигации, мс. Через прокси страница грузится 7-10с, 30с не хватало.
+    nav_timeout_ms: int = 60000
+
     @property
     def search_keywords(self) -> List[str]:
         return [q.strip() for q in self.search_queries.split(",")]

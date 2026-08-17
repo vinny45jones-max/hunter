@@ -10,10 +10,11 @@ from src import browser_pool
 
 # CSS-селекторы rabota.by — проверены debug_selectors.py на live-сайте
 SELECTORS = {
-    "vacancy_card": "div[data-qa='vacancy-serp__vacancy'], div.vacancy-card, div[class*='serp-item']",
+    # Карточка — article (редизайн magritte), div оставлен для обратной совместимости
+    "vacancy_card": "[data-qa='vacancy-serp__vacancy'], div.vacancy-card, div[class*='serp-item']",
     "vacancy_title": "a[data-qa='serp-item__title'], a.vacancy-card__title, h3 a",
-    "vacancy_company": "a[data-qa='vacancy-serp__vacancy-employer'], span.vacancy-card__company",
-    "vacancy_salary": "[data-qa='vacancy-serp__vacancy-compensation'], div[class*='compensation'], span[class*='compensation']",
+    "vacancy_company": "[data-qa='vacancy-serp__vacancy-employer'], [data-qa='vacancy-serp__vacancy-employer-text'], span.vacancy-card__company",
+    "vacancy_salary": "[data-qa='vacancy-serp__compensation'], [data-qa='vacancy-serp__vacancy-compensation'], div[class*='compensation'], span[class*='compensation']",
     "vacancy_city": "[data-qa='vacancy-serp__vacancy-address'], span.vacancy-card__city",
     "next_page": "a[data-qa='pager-next'], a.pagination__next",
     "full_description": "div[data-qa='vacancy-description'], div.vacancy-description",
@@ -62,7 +63,7 @@ async def parse_search_results(
 
                 for page_num in range(max_pages):
                     url = f"{search_url}&page={page_num}"
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    await page.goto(url, wait_until="domcontentloaded", timeout=settings.nav_timeout_ms)
                     await _random_delay(1.5, 3.0)
 
                     cards = await page.query_selector_all(SELECTORS["vacancy_card"])
@@ -138,7 +139,7 @@ async def get_full_description(url: str, chat_id: str | int) -> Optional[str]:
         try:
             async with browser_pool.acquire(chat_id) as context:
                 page = await context.new_page()
-                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=settings.nav_timeout_ms)
                 await _random_delay(1.0, 2.5)
 
                 desc_el = await page.query_selector(SELECTORS["full_description"])

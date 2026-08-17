@@ -102,7 +102,7 @@ async def _try_click(page: Page, selector: str, timeout: int = 3000) -> bool:
 
 
 async def _perform_login(page: Page, email: str, password: str) -> None:
-    await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+    await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=settings.nav_timeout_ms)
     await page.wait_for_timeout(1500)
 
     # Если сессия уже валидна — /account/login редиректит на ЛК; ничего делать не нужно.
@@ -182,7 +182,7 @@ async def ensure_logged_in(context: BrowserContext, chat_id: str | int) -> None:
     """
     page = await context.new_page()
     try:
-        await page.goto("https://rabota.by", wait_until="domcontentloaded", timeout=30000)
+        await page.goto("https://rabota.by", wait_until="domcontentloaded", timeout=settings.nav_timeout_ms)
         if await _is_authorised(page):
             return
 

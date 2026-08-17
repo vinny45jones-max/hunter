@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from src.config import log
+from src.config import settings, log
 from src import browser_pool
 
 
@@ -12,7 +12,7 @@ async def send_reply(conversation_id: str, text: str, chat_id: str | int) -> Tup
             await page.goto(
                 f"https://rabota.by/applicant/responses/{conversation_id}",
                 wait_until="domcontentloaded",
-                timeout=30000,
+                timeout=settings.nav_timeout_ms,
             )
 
             # Проверить авторизацию
