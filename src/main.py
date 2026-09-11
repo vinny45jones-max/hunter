@@ -9,6 +9,30 @@ import yaml
 from src.config import settings, log
 from src import database, pipeline, bot
 
+# Потолок на один прогон планировщика. Зависший прогон (мёртвый драйвер браузера,
+# неотвечающий сайт) раньше вешал цикл навсегда и молча — без единой строки в логе.
+SCRAPE_WATCHDOG_S = 90 * 60
+MESSAGES_WATCHDOG_S = 20 * 60
+
+
+async def _run_guarded(coro_fn, name: str, timeout: float):
+    """Один прогон планировщика с потолком по времени.
+
+    asyncio.wait вместо wait_for: не ждём отмены задачи, которая может её игнорировать.
+    Ошибки и таймаут логируются — наружу не летят, цикл продолжается.
+    """
+    task = asyncio.ensure_future(coro_fn())
+    done, pending = await asyncio.wait({task}, timeout=timeout)
+    if task in pending:
+        task.cancel()
+        log.error(
+            f"Scheduler[{name}]: прогон завис >{timeout / 60:.0f} мин — прерван watchdog'ом"
+        )
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error(f"Scheduler[{name}] error: {exc}")
+
 
 async def _backfill_profile_from_yaml():
     """Для юзеров с rabota_email, но без candidate_name — залить профиль из profile.yml."""
@@ -88,17 +112,14 @@ async def main():
         except asyncio.TimeoutError:
             return False
 
-    async def _interval_loop(coro_fn, minutes: int, name: str):
+    async def _interval_loop(coro_fn, minutes: int, name: str, timeout: float):
         while not stop_event.is_set():
             if await _interruptible_sleep(minutes * 60):
                 break
-            try:
-                log.info(f"Scheduler[{name}]: запуск")
-                await coro_fn()
-            except Exception as e:
-                log.error(f"Scheduler[{name}] error: {e}")
+            log.info(f"Scheduler[{name}]: запуск")
+            await _run_guarded(coro_fn, name, timeout)
 
-    async def _daily_loop(coro_fn, hour: int, tz_name: str, name: str):
+    async def _daily_loop(coro_fn, hour: int, tz_name: str, name: str, timeout: float):
         from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
         tz = ZoneInfo(tz_name)
@@ -111,18 +132,26 @@ async def main():
             log.info(f"Scheduler[{name}]: следующий запуск {nxt:%Y-%m-%d %H:%M} {tz_name}")
             if await _interruptible_sleep(wait):
                 break
-            try:
-                log.info(f"Scheduler[{name}]: запуск")
-                await coro_fn()
-            except Exception as e:
-                log.error(f"Scheduler[{name}] error: {e}")
+            log.info(f"Scheduler[{name}]: запуск")
+            await _run_guarded(coro_fn, name, timeout)
 
     bg_tasks = [
         asyncio.create_task(
-            _daily_loop(pipeline.run_pipeline, settings.scrape_hour, settings.timezone, "scrape")
+            _daily_loop(
+                pipeline.run_pipeline,
+                settings.scrape_hour,
+                settings.timezone,
+                "scrape",
+                SCRAPE_WATCHDOG_S,
+            )
         ),
         asyncio.create_task(
-            _interval_loop(pipeline.check_messages, settings.message_check_interval_minutes, "messages")
+            _interval_loop(
+                pipeline.check_messages,
+                settings.message_check_interval_minutes,
+                "messages",
+                MESSAGES_WATCHDOG_S,
+            )
         ),
     ]
     log.info(
