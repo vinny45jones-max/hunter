@@ -34,6 +34,33 @@ def _parse_proxy(url: Optional[str]) -> Optional[dict]:
 
 _browser: Optional[Browser] = None
 _playwright: Optional[Playwright] = None
+# Браузер после зависшего cleanup: закрывать его нельзя (повиснет снова),
+# но и переиспользовать нельзя — следующий get_browser() поднимет новый.
+_browser_dirty: bool = False
+
+# Сколько ждём вызовы Playwright, которые в норме мгновенные.
+CLEANUP_TIMEOUT_S = 30.0
+RESTART_TIMEOUT_S = 60.0
+
+
+async def _guarded(coro, timeout: float, what: str) -> str:
+    """Ждёт корутину не дольше timeout. Возвращает "ok" | "timeout" | "error".
+
+    Не использует asyncio.wait_for: тот при таймауте ждёт отмены задачи,
+    а зависший вызов Playwright отмену может игнорировать — тогда виснет и он.
+    Здесь задача бросается в фон, вызывающий продолжает работу.
+    """
+    task = asyncio.ensure_future(coro)
+    done, pending = await asyncio.wait({task}, timeout=timeout)
+    if task in pending:
+        task.cancel()
+        log.error(f"Browser pool: {what} завис >{timeout:.0f}с — бросаю в фоне")
+        return "timeout"
+    exc = task.exception()
+    if exc is not None:
+        log.warning(f"Browser pool: {what} упал: {exc}")
+        return "error"
+    return "ok"
 _semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
 
 USER_AGENT = (
@@ -56,7 +83,11 @@ def _detect_chrome_channel() -> Optional[str]:
 
 
 async def get_browser() -> Browser:
-    global _browser, _playwright
+    global _browser, _playwright, _browser_dirty
+    if _browser_dirty:
+        log.warning("Browser pool: браузер помечен битым, поднимаю новый")
+        _browser = None
+        _browser_dirty = False
     if _browser is None or not _browser.is_connected():
         if _playwright is None:
             _playwright = await async_playwright().start()
@@ -116,20 +147,26 @@ async def acquire(chat_id: str | int, save_on_exit: bool = True):
     браузер живёт дальше. Семафор не даёт двум юзерам работать параллельно
     в одном инстансе браузера.
     """
+    global _browser_dirty
     async with _semaphore:
         context = await get_context(chat_id)
         try:
             yield context
         finally:
-            try:
-                if save_on_exit:
-                    await save_context(context, chat_id)
-            except Exception:
-                pass
-            try:
-                await context.close()
-            except Exception:
-                pass
+            results = []
+            if save_on_exit:
+                results.append(
+                    await _guarded(
+                        save_context(context, chat_id), CLEANUP_TIMEOUT_S, "save_context"
+                    )
+                )
+            results.append(
+                await _guarded(context.close(), CLEANUP_TIMEOUT_S, "context.close")
+            )
+            # Таймаут (в отличие от обычной ошибки) означает мёртвый драйвер:
+            # переиспользовать браузер нельзя, иначе зависнет и следующий прогон.
+            if "timeout" in results:
+                _browser_dirty = True
 
 
 def wipe_session(chat_id: str | int) -> None:
@@ -141,20 +178,24 @@ def wipe_session(chat_id: str | int) -> None:
 
 
 async def restart():
-    """Принудительно пересоздать браузер (при сетевых ошибках)."""
-    global _browser, _playwright
+    """Принудительно пересоздать браузер (при сетевых ошибках).
+
+    Закрытие старого ограничено по времени: зависший драйвер бросается в фоне,
+    иначе рестарт держит семафор acquire() бесконечно.
+    """
+    global _browser, _playwright, _browser_dirty
     log.warning("Browser pool: restarting browser")
-    try:
-        if _browser and _browser.is_connected():
-            await _browser.close()
-    except Exception:
-        pass
-    _browser = None
-    if _playwright is not None:
+    if _browser is not None:
         try:
-            await _playwright.stop()
+            connected = _browser.is_connected()
         except Exception:
-            pass
+            connected = False
+        if connected:
+            await _guarded(_browser.close(), RESTART_TIMEOUT_S, "browser.close")
+    _browser = None
+    _browser_dirty = False
+    if _playwright is not None:
+        await _guarded(_playwright.stop(), RESTART_TIMEOUT_S, "playwright.stop")
         _playwright = None
     await get_browser()
     log.info("Browser pool: browser restarted successfully")
