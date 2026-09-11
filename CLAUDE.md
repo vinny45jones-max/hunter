@@ -27,7 +27,7 @@ Python 3.11, async. Модули в `src/`:
 
 - `playwright` — браузерная автоматизация (Chromium, headless)
 - `python-telegram-bot` — Telegram Bot API
-- `anthropic` — Claude API (модель: claude-sonnet-4-20250514)
+- `anthropic` — Claude API (модель: claude-sonnet-4-6)
 - `aiosqlite` — async SQLite
 - `pydantic-settings` — конфигурация из env
 - `cryptography` — Fernet-шифрование учёток
@@ -49,7 +49,7 @@ docker compose up -d
 ## Тесты
 
 ```bash
-# Локальные тесты (156 passed, 2 skipped)
+# Локальные тесты (167 passed, 3 skipped)
 python -m pytest -q
 
 # Live API тесты (нужен ANTHROPIC_API_KEY в .env)
