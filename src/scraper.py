@@ -58,7 +58,10 @@ async def parse_search_results(
         try:
             async with browser_pool.acquire(chat_id) as context:
                 page = await context.new_page()
-                search_url = f"{BASE_URL}/search/vacancy?text={keyword}&area={area_id}"
+                search_url = (
+                    f"{BASE_URL}/search/vacancy?text={keyword}&area={area_id}"
+                    f"&order_by=publication_time&search_period={settings.search_period_days}"
+                )
                 log.info(f"Scraping: {keyword} -> {search_url}")
 
                 for page_num in range(max_pages):

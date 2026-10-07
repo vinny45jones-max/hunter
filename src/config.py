@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Minsk"
     message_check_interval_minutes: int = 5
     max_pages: int = 1
+    # Свежие сверху; окно с запасом на пропущенный ежедневный прогон
+    search_period_days: int = 3
 
     # Пути (Railway Volume монтируется в /data)
     db_path: str = "/data/hunter.db"
