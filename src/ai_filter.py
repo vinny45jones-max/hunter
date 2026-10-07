@@ -125,6 +125,10 @@ async def get_candidate_info(chat_id: str) -> tuple[str, str]:
     """Возвращает (candidate_name, candidate_profile) из БД для конкретного юзера."""
     name = await database.get_setting(chat_id, "candidate_name", "Кандидат")
     profile = await database.get_setting(chat_id, "candidate_profile", "Профиль не заполнен")
+    # Отдельно от профиля: переживает перезаливку резюме
+    target = await database.get_setting(chat_id, "target_roles")
+    if target:
+        profile = f"{profile}\n\nЦЕЛЕВОЙ ДИАПАЗОН РОЛЕЙ (все уровни внутри подходят): {target}"
     return name, profile
 
 

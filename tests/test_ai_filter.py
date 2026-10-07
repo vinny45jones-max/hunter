@@ -75,3 +75,15 @@ class TestExtractExternalId:
         # Числа < 6 цифр не считаются external_id
         url = "https://rabota.by/page/123"
         assert _extract_external_id(url) is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_info_appends_target_roles(init_db):
+    from src import database
+    from src.ai_filter import get_candidate_info
+    await database.set_setting("42", "candidate_profile", "Профиль")
+    _, profile = await get_candidate_info("42")
+    assert profile == "Профиль"
+    await database.set_setting("42", "target_roles", "от РОП до C-level")
+    _, profile = await get_candidate_info("42")
+    assert profile.startswith("Профиль") and "от РОП до C-level" in profile
