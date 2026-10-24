@@ -16,7 +16,43 @@ def fast_timeouts(monkeypatch, tmp_path):
     monkeypatch.setattr(browser_pool, "_semaphore", asyncio.Semaphore(1))
     monkeypatch.setattr(browser_pool, "CLEANUP_TIMEOUT_S", 0.05)
     monkeypatch.setattr(browser_pool, "RESTART_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(browser_pool, "CONTEXT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(browser_pool, "_browser_dirty", False)
     yield
+
+
+@pytest.mark.asyncio
+async def test_hanging_new_context_raises_network_error():
+    """Заморозка 2026-10-19: new_context висел вечно, прогон рвал только watchdog."""
+    browser = MagicMock()
+
+    async def never(**kw):
+        await asyncio.Event().wait()
+
+    browser.new_context = MagicMock(side_effect=lambda **kw: never(**kw))
+
+    with patch("src.browser_pool.get_browser", AsyncMock(return_value=browser)):
+        with pytest.raises(Exception) as ei:
+            await asyncio.wait_for(browser_pool.get_context("1"), timeout=1.0)
+
+    assert browser_pool.is_network_error(ei.value)
+    assert browser_pool._browser_dirty is True
+
+
+@pytest.mark.asyncio
+async def test_hanging_new_context_releases_semaphore():
+    browser = MagicMock()
+
+    async def never(**kw):
+        await asyncio.Event().wait()
+
+    browser.new_context = MagicMock(side_effect=lambda **kw: never(**kw))
+
+    with patch("src.browser_pool.get_browser", AsyncMock(return_value=browser)):
+        with pytest.raises(Exception):
+            async with browser_pool.acquire("1"):
+                pass
+    assert browser_pool._semaphore._value == 1
 
 
 def _hanging_context():

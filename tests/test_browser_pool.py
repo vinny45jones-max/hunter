@@ -1,5 +1,6 @@
 """Шаг 7 плана: unit-тесты для src.browser_pool (без реального Playwright)."""
 import asyncio
+import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -59,14 +60,34 @@ async def test_get_context_with_existing_state(tmp_path, monkeypatch):
     folder = tmp_path / "9"
     folder.mkdir()
     state = folder / "storage_state.json"
-    state.write_text("{}")
+    cookie = {"name": "hhtoken", "value": "x", "domain": ".rabota.by", "path": "/"}
+    state.write_text(json.dumps({
+        "cookies": [cookie],
+        "origins": [{"origin": "https://hhcdn.ru", "localStorage": [{"name": "a", "value": "b"}]}],
+    }))
 
     fake_browser = MagicMock()
     fake_browser.new_context = AsyncMock(return_value="CTX")
     with patch("src.browser_pool.get_browser", AsyncMock(return_value=fake_browser)):
         await browser_pool.get_context("9")
     kwargs = fake_browser.new_context.call_args.kwargs
-    assert kwargs["storage_state"] == str(state)
+    # localStorage не грузим: ради него Playwright открывает каждый origin через прокси
+    # и при недоступном сайте виснет (2026-10-19).
+    assert kwargs["storage_state"] == {"cookies": [cookie], "origins": []}
+
+
+@pytest.mark.asyncio
+async def test_get_context_with_broken_state_starts_clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser_pool.settings, "sessions_dir", str(tmp_path))
+    folder = tmp_path / "10"
+    folder.mkdir()
+    (folder / "storage_state.json").write_text("{not json")
+
+    fake_browser = MagicMock()
+    fake_browser.new_context = AsyncMock(return_value="CTX")
+    with patch("src.browser_pool.get_browser", AsyncMock(return_value=fake_browser)):
+        await browser_pool.get_context("10")
+    assert fake_browser.new_context.call_args.kwargs["storage_state"] is None
 
 
 @pytest.mark.asyncio

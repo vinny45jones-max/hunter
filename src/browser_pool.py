@@ -1,5 +1,6 @@
 """Единый Playwright-браузер для всех модулей."""
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -41,6 +42,7 @@ _browser_dirty: bool = False
 # Сколько ждём вызовы Playwright, которые в норме мгновенные.
 CLEANUP_TIMEOUT_S = 30.0
 RESTART_TIMEOUT_S = 60.0
+CONTEXT_TIMEOUT_S = 60.0
 
 
 async def _guarded(coro, timeout: float, what: str) -> str:
@@ -115,21 +117,47 @@ def _session_path(chat_id: str | int) -> str:
     return os.path.join(settings.sessions_dir, str(chat_id), "storage_state.json")
 
 
+def _load_cookies_state(chat_id: str | int) -> Optional[dict]:
+    """storage_state только с куками.
+
+    localStorage отбрасываем: чтобы его выставить, Playwright открывает каждый
+    origin (rabota.by, hhcdn.ru) через прокси, и при недоступном сайте
+    new_context падает ERR_ABORTED или виснет. Для авторизации хватает кук.
+    """
+    path = _session_path(chat_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return {"cookies": data.get("cookies", []), "origins": []}
+    except (OSError, ValueError, AttributeError) as e:
+        log.warning(f"Browser pool: битый storage_state для {chat_id}, начинаю без сессии: {e}")
+        return None
+
+
 async def get_context(chat_id: str | int) -> BrowserContext:
-    """Контекст браузера с per-user storage_state.
+    """Контекст браузера с per-user куками из storage_state.
 
     Загружает `sessions_dir/{chat_id}/storage_state.json` если файл есть.
     Сохранение делает `save_context()` или `auth.ensure_logged_in()`.
     """
+    global _browser_dirty
     browser = await get_browser()
-    path = _session_path(chat_id)
-    storage_state = path if os.path.exists(path) else None
-    context = await browser.new_context(
-        storage_state=storage_state,
+    task = asyncio.ensure_future(browser.new_context(
+        storage_state=_load_cookies_state(chat_id),
         user_agent=USER_AGENT,
         viewport={"width": 1920, "height": 1080},
-    )
-    return context
+    ))
+    done, _ = await asyncio.wait({task}, timeout=CONTEXT_TIMEOUT_S)
+    if task not in done:
+        task.cancel()
+        # Драйвер не отвечает — следующий прогон должен поднять новый браузер.
+        _browser_dirty = True
+        raise PlaywrightTimeoutError(
+            f"Browser.new_context: Timeout {CONTEXT_TIMEOUT_S * 1000:.0f}ms exceeded"
+        )
+    return task.result()
 
 
 async def save_context(context: BrowserContext, chat_id: str | int) -> str:
