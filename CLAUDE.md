@@ -9,7 +9,7 @@ Python 3.11, async. Модули в `src/`:
 - `main.py` — точка входа: init DB, бэкфилл профиля, Telegram polling + фоновые asyncio-loop'ы (парсинг ежедневно в `scrape_hour`:00 по `timezone`, входящие каждые `message_check_interval_minutes`)
 - `pipeline.py` — основной цикл: scrape -> deduplicate -> AI score -> notify TG
 - `scraper.py` — Playwright-скрапер rabota.by (поиск + описание вакансий)
-- `ai_filter.py` — Claude API (оценка+cover letter в одном вызове, ответы)
+- `ai_filter.py` — Claude API (оценка по 4 критериям, cover letter по кнопке отклика, ответы)
 - `bot.py` — Telegram-бот (команды, inline-кнопки, ConversationHandler, онбординг)
 - `database.py` — SQLite через aiosqlite (vacancies, messages, conversations, search_log, users)
 - `auth.py` — логин на rabota.by, storage_state per-user, ретраи

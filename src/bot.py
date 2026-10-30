@@ -53,11 +53,9 @@ def _vacancy_card_text(v, today_left: int = None) -> str:
 
     # Индикатор: требуется ли сопроводительное
     if v.require_cover_letter:
-        cover = "Требуется сопроводительное письмо"
-    elif v.cover_letter:
-        cover = "Сопроводительное сгенерировано"
+        cover = "Требуется сопроводительное письмо, составлю при отклике"
     else:
-        cover = "Без сопроводительного"
+        cover = "Письмо под вакансию составлю при отклике"
 
     lines = [
         f"*{title}*",
@@ -888,7 +886,7 @@ def _cover_user_text_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
 
 
 async def callback_apply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Кнопка 'Откликнуться' — запуск cover letter flow."""
+    """Кнопка 'Откликнуться' — письмо под вакансию генерируется и отклик уходит сразу."""
     query = update.callback_query
     await query.answer()
     vacancy_id = int(query.data.split(":")[1])
@@ -902,36 +900,51 @@ async def callback_apply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Контроль: один контекст за раз
-    if context.user_data.get("editing_vacancy"):
-        await query.message.reply_text(
-            "Уже идёт работа над другим письмом. Завершите или отмените."
-        )
+    vacancy = await database.get_vacancy(vacancy_id)
+    if vacancy and vacancy.status == "applied":
+        await query.message.reply_text("На эту вакансию уже откликались.")
         return
 
-    await query.message.reply_text("Генерирую сопроводительное письмо...")
+    # Убираем кнопки сразу, чтобы повторное нажатие не отправило второй отклик
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text("Пишу сопроводительное письмо и отправляю отклик...")
 
     try:
-        result = await cover_flow.start_cover_letter(vacancy_id, chat_id=chat_id)
+        await cover_flow.start_cover_letter(vacancy_id, chat_id=chat_id)
     except ValueError as e:
         await query.message.reply_text(f"Ошибка: {e}")
         return
 
-    context.user_data["editing_vacancy"] = vacancy_id
+    await _send_application(query.message, vacancy_id, chat_id)
+    context.user_data.pop("editing_vacancy", None)
 
-    preview = cover_flow.format_preview(
-        result["cover_letter"], result["requirements"], result["version"]
-    )
-    keyboard = _cover_preview_keyboard(vacancy_id)
 
-    today_left = max_applies - today_count
-    footer = f"\n\n📊 Осталось откликов сегодня: {today_left}"
+async def _send_application(message, vacancy_id: int, chat_id: str) -> None:
+    """Отправить отклик с письмом, сохранённым у вакансии, и сообщить итог."""
+    vacancy = await database.get_vacancy(vacancy_id)
+    if not vacancy or not vacancy.cover_letter:
+        await message.reply_text("Не удалось составить письмо, отклик не отправлен.")
+        return
 
-    await query.message.reply_text(
-        preview + footer,
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
+    try:
+        await cover_flow.confirm_send(vacancy_id)
+    except ValueError as e:
+        await message.reply_text(f"Ошибка: {e}")
+        return
+
+    from src import applier
+    success, result = await applier.apply_to_vacancy(vacancy, chat_id)
+
+    if success:
+        await cover_flow.mark_sent(vacancy_id)
+        await database.update_status(vacancy_id, "applied")
+        await message.reply_text(
+            f"Отклик отправлен: {vacancy.title}\n\nПисьмо:\n{vacancy.cover_letter}"
+        )
+    else:
+        await cover_flow.mark_failed(vacancy_id)
+        await database.update_status(vacancy_id, "error", result)
+        await message.reply_text(f"Ошибка отклика: {result}")
 
 
 async def callback_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -951,34 +964,9 @@ async def callback_cover_send(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     vacancy_id = int(query.data.split(":")[1])
 
-    vacancy = await database.get_vacancy(vacancy_id)
-    if not vacancy or not vacancy.cover_letter:
-        await query.message.reply_text("Нет письма для отправки.")
-        context.user_data.pop("editing_vacancy", None)
-        return
-
-    try:
-        await cover_flow.confirm_send(vacancy_id)
-    except ValueError as e:
-        await query.message.reply_text(f"Ошибка: {e}")
-        return
-
     await query.edit_message_reply_markup(reply_markup=None)
     await query.message.reply_text("Отправляю отклик...")
-
-    from src import applier
-    chat_id = str(update.effective_chat.id)
-    success, message = await applier.apply_to_vacancy(vacancy, chat_id)
-
-    if success:
-        await cover_flow.mark_sent(vacancy_id)
-        await database.update_status(vacancy_id, "applied")
-        await query.message.reply_text(f"Отклик отправлен: {vacancy.title}")
-    else:
-        await cover_flow.mark_failed(vacancy_id)
-        await database.update_status(vacancy_id, "error", message)
-        await query.message.reply_text(f"Ошибка отклика: {message}")
-
+    await _send_application(query.message, vacancy_id, str(update.effective_chat.id))
     context.user_data.pop("editing_vacancy", None)
 
 

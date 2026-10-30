@@ -108,13 +108,11 @@ def _assert_valid_live_result(result: dict):
 async def test_live_relevance_scores_rank_executive_roles_above_frontend(
     live_anthropic_api_key, stub_profile,
 ):
-    from src.ai_filter import evaluate_and_cover
+    from src.ai_filter import evaluate_vacancy, generate_cover_letter
 
-    executive = await evaluate_and_cover(EXECUTIVE_VACANCY, TEST_CHAT_ID, min_score=60)
-    ai_transformation = await evaluate_and_cover(
-        AI_TRANSFORMATION_VACANCY, TEST_CHAT_ID, min_score=60
-    )
-    frontend = await evaluate_and_cover(FRONTEND_VACANCY, TEST_CHAT_ID, min_score=60)
+    executive = await evaluate_vacancy(EXECUTIVE_VACANCY, TEST_CHAT_ID)
+    ai_transformation = await evaluate_vacancy(AI_TRANSFORMATION_VACANCY, TEST_CHAT_ID)
+    frontend = await evaluate_vacancy(FRONTEND_VACANCY, TEST_CHAT_ID)
 
     _assert_valid_live_result(executive)
     _assert_valid_live_result(ai_transformation)
@@ -123,10 +121,11 @@ async def test_live_relevance_scores_rank_executive_roles_above_frontend(
     assert executive["score"] > frontend["score"]
     assert ai_transformation["score"] > frontend["score"]
 
-    # cover letter генерируется для релевантных в том же вызове
-    assert executive.get("cover_letter")
-    assert isinstance(executive["cover_letter"], str)
-    assert len(executive["cover_letter"].strip()) >= 80
+    # письмо — отдельным вызовом, как по кнопке «Откликнуться»
+    letter = await generate_cover_letter(EXECUTIVE_VACANCY, TEST_CHAT_ID)
+    assert isinstance(letter, str)
+    assert len(letter.strip()) >= 80
+    assert not letter.lstrip().startswith("{")
 
 
 # Точный состав прод-батча за 05.09.2026 — «слабый день»: executive-вакансий нет,

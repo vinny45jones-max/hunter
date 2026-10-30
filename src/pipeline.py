@@ -175,17 +175,16 @@ async def run_pipeline_for_user(chat_id: str):
                 log.warning(f"Pipeline [{chat_id}]: failed to get description for {v.url}: {e}")
             await bot.update_progress(chat_id, pid, 55 + int(15 * (i + 1) / n_prom), f"Описания {i + 1}/{n_prom}")
 
-        # 6. Полная AI-оценка с описанием + cover letter (один вызов)
+        # 6. Полная AI-оценка с описанием (письмо пишется позже, по кнопке отклика)
         min_score = await database.get_setting_int(chat_id, "min_relevance_score", settings.min_relevance_score)
         await bot.update_progress(chat_id, pid, 70, f"Оцениваю {n_prom} вакансий с описаниями...")
         for i, v in enumerate(promising):
             try:
-                result = await ai_filter.evaluate_and_cover(v, chat_id, min_score)
+                result = await ai_filter.evaluate_vacancy(v, chat_id)
                 v.relevance_score = result["score"]
                 v.relevance_reason = result["reason"]
 
-                if v.relevance_score >= min_score and result.get("cover_letter"):
-                    v.cover_letter = result["cover_letter"]
+                if v.relevance_score >= min_score:
                     v.status = "filtered"
             except Exception as e:
                 log.warning(f"Pipeline [{chat_id}]: AI filter error for {v.title}: {e}")

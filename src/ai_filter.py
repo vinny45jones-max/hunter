@@ -42,6 +42,25 @@ BATCH_EVALUATE_PROMPT = """
 {vacancies_block}
 """
 
+# Правила письма по кнопке «Откликнуться»: письмо уходит без превью, поэтому без пробелов и выдумок
+COVER_LETTER_RULES = """
+ПРАВИЛА ПИСЬМА:
+- Письмо под эту вакансию: возьми 2-3 главные задачи или требования из описания
+  и к каждой приведи конкретный опыт кандидата из профиля, с цифрами, где они есть.
+- Позиция: кандидат подходит под эту роль. Не упоминай пробелы, недостающий опыт,
+  другую отрасль или то, что уровень кандидата выше; не используй «хотя»,
+  «несмотря на», «пусть и не». Смежный опыт подавай как прямо применимый
+  к задачам этой компании.
+- Только факты из профиля: не придумывай компании, цифры, должности и навыки,
+  которых там нет. Цифру переноси вместе с её показателем и компанией как есть:
+  рост валовой прибыли — не рост выручки.
+- Требование вакансии, которого нет в профиле, не упоминай вовсе — ни как
+  выполненное, ни как пробел. Пиши о тех требованиях, что профиль покрывает.
+- 3-5 предложений, до 900 знаков. Тон уверенный, конкретный, без воды. Русский язык.
+- Первая фраза — сразу ценность для компании. Не начинай с "Уважаемый",
+  «Меня привлекает», «Меня заинтересовала».
+"""
+
 EVALUATE_PROMPT = """
 ПРОФИЛЬ КАНДИДАТА — {candidate_name}:
 {candidate_profile}
@@ -90,14 +109,7 @@ EVALUATE_PROMPT = """
 
    reason — 1-2 предложения: главное, что определило оценку.
 
-2. Итог = (4·function + 3·level + 3·tasks) × (0.5 + 0.05·requirements), округлить (0-100).
-   Если итог >= {min_score} — напиши сопроводительное письмо (3-5 предложений):
-   - Тон: уверенный, конкретный, без воды. Русский язык.
-   - Не начинай с "Уважаемый". Сразу к делу.
-   - Покажи конкретную ценность для этой компании.
-   Если итог < {min_score} — cover_letter = null.
-{requirements_block}
-JSON: {{"scores": {{"function": <int>, "level": <int>, "tasks": <int>, "requirements": <int>}}, "reason": "<str>", "cover_letter": "<str> или null"}}
+JSON: {{"scores": {{"function": <int>, "level": <int>, "tasks": <int>, "requirements": <int>}}, "reason": "<str>"}}
 """
 
 # Веса критериев соответствия, в сумме 10 → база 0-100
@@ -118,7 +130,7 @@ def _combine_scores(scores: dict) -> int:
     return round(base * (0.5 + 0.05 * get("requirements")))
 
 COVER_LETTER_PROMPT = """
-Напиши сопроводительное письмо (3-5 предложений) для отклика на вакансию.
+Напиши сопроводительное письмо для отклика на вакансию.
 
 Вакансия: {title} в {company}
 Описание: {description}
@@ -126,9 +138,14 @@ COVER_LETTER_PROMPT = """
 Кандидат — {candidate_name}:
 {candidate_profile}
 {version_block}
-Тон: уверенный, конкретный, без воды. Русский язык.
-Не начинай с "Уважаемый". Сразу к делу.
-Покажи конкретную ценность для этой компании, привяжи к их задачам.
+ШАГ 1. Выбери 2-3 главные задачи или требования вакансии, которые профиль
+покрывает. Для каждой выпиши цитату из профиля — фрагмент, скопированный
+дословно, без перефразирования.
+ШАГ 2. Напиши письмо, опираясь только на эти цитаты. Общие сведения о кандидате
+(стаж, языки, образование, локация) бери из профиля, только если вакансия их просит.
+{letter_rules}
+Отвечай ТОЛЬКО валидным JSON без markdown-блоков:
+{{"facts": [{{"need": "<задача из вакансии>", "quote": "<дословно из профиля>"}}], "letter": "<текст письма>"}}
 """
 
 IMPROVE_COVER_LETTER_PROMPT = """
@@ -261,14 +278,12 @@ async def batch_evaluate_titles(vacancies: List[Vacancy], chat_id: str, batch_si
     return all_scores
 
 
-async def evaluate_and_cover(vacancy: Vacancy, chat_id: str, min_score: int = 60) -> dict:
-    """Оценка + cover letter в одном вызове. Возвращает {score, reason, cover_letter}."""
-    candidate_name, candidate_profile = await get_candidate_info(chat_id)
+async def evaluate_vacancy(vacancy: Vacancy, chat_id: str) -> dict:
+    """Полная оценка по описанию. Возвращает {score, reason, scores}.
 
-    req_block = ""
-    if hasattr(vacancy, '_requirements') and vacancy._requirements:
-        items = "\n".join(f"- {r}" for r in vacancy._requirements)
-        req_block = f"\nТребования работодателя к письму:\n{items}\nОбязательно ответь на каждое требование.\n"
+    Письмо здесь не пишется: его генерирует кнопка «Откликнуться» прямо перед отправкой.
+    """
+    candidate_name, candidate_profile = await get_candidate_info(chat_id)
 
     prompt = EVALUATE_PROMPT.format(
         title=vacancy.title,
@@ -276,8 +291,6 @@ async def evaluate_and_cover(vacancy: Vacancy, chat_id: str, min_score: int = 60
         salary=vacancy.salary or "Не указана",
         city=vacancy.city or "Не указан",
         description=(vacancy.description or "")[:3000],
-        min_score=min_score,
-        requirements_block=req_block,
         candidate_name=candidate_name,
         candidate_profile=candidate_profile,
     )
@@ -286,31 +299,22 @@ async def evaluate_and_cover(vacancy: Vacancy, chat_id: str, min_score: int = 60
         try:
             response = await _client.messages.create(
                 model=MODEL,
-                max_tokens=800,
+                max_tokens=500,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
-            text = response.content[0].text
-            result = _parse_json(text)
+            result = _parse_json(response.content[0].text)
             if isinstance(result.get("scores"), dict):
                 result["score"] = _combine_scores(result["scores"])
                 log.info(f"AI evaluate [{vacancy.title}]: {result['scores']} → {result['score']}")
             else:
                 result["score"] = max(0, min(100, int(result.get("score", 0))))
-            result.setdefault("cover_letter", None)
-            break
+            return result
         except Exception as e:
             log.warning(f"AI evaluate attempt {attempt + 1} failed: {e}")
             if attempt == 0:
                 continue
-            return {"score": 0, "reason": f"AI error: {e}", "cover_letter": None}
-
-    # Итог считает код, а письмо решала модель по своей арифметике — сверяем
-    if result["score"] < min_score:
-        result["cover_letter"] = None
-    elif not result["cover_letter"]:
-        result["cover_letter"] = await generate_cover_letter(vacancy, chat_id, getattr(vacancy, "_requirements", None))
-    return result
+            return {"score": 0, "reason": f"AI error: {e}"}
 
 
 async def generate_cover_letter(
@@ -339,6 +343,7 @@ async def generate_cover_letter(
         description=(vacancy.description or "")[:3000],
         requirements_block=req_block,
         version_block=ver_block,
+        letter_rules=COVER_LETTER_RULES,
         candidate_name=candidate_name,
         candidate_profile=candidate_profile,
     )
@@ -346,13 +351,36 @@ async def generate_cover_letter(
     try:
         response = await _client.messages.create(
             model=MODEL,
-            max_tokens=500,
+            max_tokens=1500,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text.strip()
+        data = _parse_letter_json(response.content[0].text)
     except Exception as e:
         log.error(f"Cover letter generation failed: {e}")
         return ""
+
+    profile_flat = " ".join(candidate_profile.split())
+    for fact in data.get("facts") or []:
+        # Модель склеивает дословные куски через «;» или «…» — проверяем каждый
+        for piece in re.split(r"[;…]|\.\.\.", str(fact.get("quote", ""))):
+            piece = " ".join(piece.split()).strip(" .,")
+            if piece and piece not in profile_flat:
+                log.warning(f"Cover letter [{vacancy.title}]: цитаты нет в профиле: {piece[:120]}")
+    return (data.get("letter") or "").strip()
+
+
+def _parse_letter_json(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r'"letter"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if not m:
+            raise ValueError(f"Cannot parse letter JSON from: {text[:200]}")
+        return {"letter": json.loads(f'"{m.group(1)}"')}
 
 
 async def improve_cover_letter(

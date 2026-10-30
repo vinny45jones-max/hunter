@@ -65,7 +65,7 @@ class TestVacancyCard:
         assert "5000 USD" in text
         assert "85/100" in text
         assert "Great match" in text
-        assert "Сопроводительное сгенерировано" in text
+        assert "составлю при отклике" in text
 
     def test_card_text_no_cover(self):
         v = Vacancy(
@@ -75,7 +75,7 @@ class TestVacancyCard:
             relevance_score=60,
         )
         text = _vacancy_card_text(v)
-        assert "Без сопроводительного" in text
+        assert "Письмо под вакансию составлю при отклике" in text
         assert "Не указана" in text  # company/salary defaults
 
     def test_card_text_no_optionals(self):
@@ -176,3 +176,60 @@ class TestCreateApp:
         ]
         # apply, skip, ai_reply, send, improve, cancel_reply = 6
         assert len(cb_handlers) >= 6
+
+
+class TestApplyOneClick:
+    """«Откликнуться» без превью: письмо генерируется и отклик уходит сразу."""
+
+    def _update(self, vacancy_id):
+        from unittest.mock import AsyncMock, MagicMock
+        update = MagicMock()
+        update.callback_query.data = f"apply:{vacancy_id}"
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.edit_message_reply_markup = AsyncMock()
+        update.callback_query.message.chat_id = 42
+        update.callback_query.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.user_data = {}
+        return update, context
+
+    async def _vacancy(self):
+        from src import database
+        return await database.save_vacancy(Vacancy(
+            external_id="ext1", url="https://rabota.by/vacancy/1", title="Коммерческий директор",
+            company="ООО Тест", description="Руководство продажами",
+        ))
+
+    @pytest.mark.asyncio
+    async def test_generates_and_sends(self, init_db, monkeypatch):
+        from unittest.mock import AsyncMock
+        from src import bot, database, ai_filter, applier
+        vid = await self._vacancy()
+        monkeypatch.setattr(ai_filter, "generate_cover_letter", AsyncMock(return_value="Письмо под вакансию"))
+        apply_mock = AsyncMock(return_value=(True, "OK"))
+        monkeypatch.setattr(applier, "apply_to_vacancy", apply_mock)
+
+        update, context = self._update(vid)
+        await bot.callback_apply(update, context)
+
+        sent_vacancy = apply_mock.await_args.args[0]
+        assert sent_vacancy.cover_letter == "Письмо под вакансию"
+        v = await database.get_vacancy(vid)
+        assert v.status == "applied" and v.apply_state == "sent"
+        update.callback_query.edit_message_reply_markup.assert_awaited_once()
+        last = update.callback_query.message.reply_text.await_args.args[0]
+        assert "Отклик отправлен" in last and "Письмо под вакансию" in last
+
+    @pytest.mark.asyncio
+    async def test_already_applied_not_resent(self, init_db, monkeypatch):
+        from unittest.mock import AsyncMock
+        from src import bot, database, applier
+        vid = await self._vacancy()
+        await database.update_status(vid, "applied")
+        apply_mock = AsyncMock(return_value=(True, "OK"))
+        monkeypatch.setattr(applier, "apply_to_vacancy", apply_mock)
+
+        update, context = self._update(vid)
+        await bot.callback_apply(update, context)
+
+        apply_mock.assert_not_awaited()
