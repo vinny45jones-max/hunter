@@ -3,7 +3,7 @@
 Тестирует внутренние функции, не требующие реального API.
 """
 import pytest
-from src.ai_filter import _parse_json
+from src.ai_filter import _parse_json, _combine_scores
 from src.scraper import _extract_external_id
 
 
@@ -48,6 +48,33 @@ class TestParseJson:
         text = '  \n  {"score": 77, "reason": "Good"}  \n  '
         result = _parse_json(text)
         assert result["score"] == 77
+
+    def test_criteria_json(self):
+        text = '{"scores": {"function": 7, "level": 10, "tasks": 6, "requirements": 10}, "reason": "ok"}'
+        result = _parse_json(text)
+        assert result["scores"]["level"] == 10
+
+    def test_criteria_regex_fallback(self):
+        text = 'broken {"scores": {"function": 7, "level": 4, "tasks": 6, "requirements": 0}, "reason": "Узкое ПО"'
+        result = _parse_json(text)
+        assert "score" not in result
+        assert result["scores"] == {"function": 7, "level": 4, "tasks": 6, "requirements": 0}
+        assert result["reason"] == "Узкое ПО"
+
+
+class TestCombineScores:
+    def test_weighted_sum(self):
+        assert _combine_scores({"function": 7, "level": 10, "tasks": 6, "requirements": 10}) == 76
+        # обязательное требование не выполнено — балл вдвое
+        assert _combine_scores({"function": 7, "level": 10, "tasks": 6, "requirements": 0}) == 38
+
+    def test_extremes(self):
+        assert _combine_scores({"function": 10, "level": 10, "tasks": 10, "requirements": 10}) == 100
+        assert _combine_scores({"function": 0, "level": 0, "tasks": 0, "requirements": 0}) == 0
+
+    def test_clamps_and_missing(self):
+        assert _combine_scores({"function": 15, "level": -3, "requirements": 10}) == 40
+        assert _combine_scores({}) == 0
 
 
 class TestExtractExternalId:

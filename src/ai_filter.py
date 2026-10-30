@@ -54,20 +54,68 @@ EVALUATE_PROMPT = """
 Описание: {description}
 
 ЗАДАЧИ:
-1. Оцени вакансию: score (0-100) и reason (1-2 предложения)
-   Зарплата — НЕ повод снижать score: оценивай функцию, уровень роли и задачи.
-   Низкую или неуказанную вилку можно упомянуть в reason, но балл за неё не снимай.
-   Другая отрасль — тоже НЕ повод снижать score: управленческие навыки переносимы.
-   Снижай только за жёсткое требование, которого нет у кандидата (обязательное
-   профильное образование/лицензия, работа в узком ПО, «опыт в отрасли обязателен»).
-2. Если score >= {min_score} — напиши сопроводительное письмо (3-5 предложений):
+1. Оцени вакансию по четырём критериям, каждый — целое от 0 до 10.
+   Опорные значения ниже — ориентиры; ставь любое целое между ними, если
+   вакансия между описаниями. Оценивай каждый критерий отдельно от остальных.
+
+   function — функция роли (продажи, коммерция, операции, AI и т.д.):
+     10 — основная функция кандидата из профиля
+      7 — смежная функция, которую кандидат реально выполнял в своих ролях
+      4 — пересечение частичное: часть обязанностей его, основная функция другая
+      0 — чужая функция
+
+   level — уровень роли относительно целевого диапазона кандидата:
+     10 — внутри целевого диапазона
+      7 — на ступень ниже или выше диапазона
+      4 — на две ступени ниже (линейный руководитель, ведущий специалист)
+      0 — рядовой исполнитель без управленческой функции
+
+   tasks — насколько задачи из описания покрыты опытом кандидата:
+     10 — почти все задачи кандидат уже делал
+      7 — большинство
+      4 — примерно половина
+      0 — почти ничего
+     Другая отрасль НЕ снижает tasks: управленческие навыки переносимы.
+     Описания нет или оно пустое — ставь 5.
+
+   requirements — жёсткие требования вакансии:
+     10 — нет обязательных требований, которых нет у кандидата
+      5 — есть обязательное требование, выполнение которого по профилю неясно
+      0 — явно обязательное требование, которого у кандидата нет (профильное
+          образование/лицензия, работа в узком ПО, «опыт в отрасли обязателен»)
+     «Желательно», «будет плюсом» — не жёсткие требования, не снижай за них.
+
+   Зарплата НЕ влияет ни на один критерий. Низкую или неуказанную вилку можно
+   упомянуть в reason, но баллы за неё не снимай.
+
+   reason — 1-2 предложения: главное, что определило оценку.
+
+2. Итог = (4·function + 3·level + 3·tasks) × (0.5 + 0.05·requirements), округлить (0-100).
+   Если итог >= {min_score} — напиши сопроводительное письмо (3-5 предложений):
    - Тон: уверенный, конкретный, без воды. Русский язык.
    - Не начинай с "Уважаемый". Сразу к делу.
    - Покажи конкретную ценность для этой компании.
-   Если score < {min_score} — cover_letter = null.
+   Если итог < {min_score} — cover_letter = null.
 {requirements_block}
-JSON: {{"score": <int>, "reason": "<str>", "cover_letter": "<str> или null"}}
+JSON: {{"scores": {{"function": <int>, "level": <int>, "tasks": <int>, "requirements": <int>}}, "reason": "<str>", "cover_letter": "<str> или null"}}
 """
+
+# Веса критериев соответствия, в сумме 10 → база 0-100
+SCORE_WEIGHTS = {"function": 4, "level": 3, "tasks": 3}
+SCORE_CRITERIA = (*SCORE_WEIGHTS, "requirements")
+
+
+def _combine_scores(scores: dict) -> int:
+    """Итоговый балл из критериев. Недостающий критерий считается за 0.
+
+    requirements — множитель, а не слагаемое: иначе руководящая должность
+    с невыполнимым обязательным требованием проходит порог за счёт level.
+    """
+    def get(key):
+        return max(0, min(10, int(scores.get(key, 0))))
+
+    base = sum(weight * get(key) for key, weight in SCORE_WEIGHTS.items())
+    return round(base * (0.5 + 0.05 * get("requirements")))
 
 COVER_LETTER_PROMPT = """
 Напиши сопроводительное письмо (3-5 предложений) для отклика на вакансию.
@@ -151,11 +199,17 @@ def _parse_json(text: str) -> dict:
     score_match = re.search(r'"score"\s*:\s*(\d+)', text)
     reason_match = re.search(r'"reason"\s*:\s*"([^"]+)"', text)
     cover_match = re.search(r'"cover_letter"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
-    if score_match:
-        result = {
-            "score": int(score_match.group(1)),
-            "reason": reason_match.group(1) if reason_match else "N/A",
-        }
+    criteria = {}
+    for key in SCORE_CRITERIA:
+        m = re.search(rf'"{key}"\s*:\s*(\d+)', text)
+        if m:
+            criteria[key] = int(m.group(1))
+    if score_match or criteria:
+        result = {"reason": reason_match.group(1) if reason_match else "N/A"}
+        if score_match:
+            result["score"] = int(score_match.group(1))
+        if criteria:
+            result["scores"] = criteria
         if cover_match:
             result["cover_letter"] = cover_match.group(1).replace("\\n", "\n")
         return result
@@ -238,14 +292,25 @@ async def evaluate_and_cover(vacancy: Vacancy, chat_id: str, min_score: int = 60
             )
             text = response.content[0].text
             result = _parse_json(text)
-            result["score"] = max(0, min(100, int(result.get("score", 0))))
+            if isinstance(result.get("scores"), dict):
+                result["score"] = _combine_scores(result["scores"])
+                log.info(f"AI evaluate [{vacancy.title}]: {result['scores']} → {result['score']}")
+            else:
+                result["score"] = max(0, min(100, int(result.get("score", 0))))
             result.setdefault("cover_letter", None)
-            return result
+            break
         except Exception as e:
             log.warning(f"AI evaluate attempt {attempt + 1} failed: {e}")
             if attempt == 0:
                 continue
             return {"score": 0, "reason": f"AI error: {e}", "cover_letter": None}
+
+    # Итог считает код, а письмо решала модель по своей арифметике — сверяем
+    if result["score"] < min_score:
+        result["cover_letter"] = None
+    elif not result["cover_letter"]:
+        result["cover_letter"] = await generate_cover_letter(vacancy, chat_id, getattr(vacancy, "_requirements", None))
+    return result
 
 
 async def generate_cover_letter(
